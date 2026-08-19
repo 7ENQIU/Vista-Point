@@ -5,6 +5,14 @@
   "lang": "ru",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f3f0e7",
-  "theme_color": "#17221d"
+  "background_color": "#f7f3e8",
+  "theme_color": "#68b49d",
+  "icons": [
+    {
+      "src": "/vista-point-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
 }

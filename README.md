@@ -32,9 +32,9 @@ npm run check
 - `src/infrastructure` — локальное хранение и будущие адаптеры;
 - `src/ui` — русскоязычный интерфейс;
 - `src/shared` — общие ресурсы, включая пользовательские строки;
-- `docs` — архитектура, формат данных и принятые решения.
+- `docs` — архитектура, дизайн-код, формат данных и принятые решения.
 
-Подробнее: [архитектура](docs/ARCHITECTURE.md) и [формат данных](docs/DATA_FORMAT.md).
+Подробнее: [архитектура](docs/ARCHITECTURE.md), [дизайн-код](docs/DESIGN_SYSTEM.md) и [формат данных](docs/DATA_FORMAT.md).
 
 Полная продуктовая спецификация и правила разработки находятся в [`Vista_Point_Codex_Project_Guidelines.md`](Vista_Point_Codex_Project_Guidelines.md).
 

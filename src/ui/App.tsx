@@ -15,6 +15,24 @@ import { IndexedDbCampaignRepository } from '../infrastructure/storage/IndexedDb
 import { ru } from '../shared/i18n/ru'
 import { downloadCampaign } from './downloadCampaign'
 
+function BrandHeader({ campaignName }: { campaignName?: string }) {
+  return (
+    <header className="app-topbar">
+      <div className="brand">
+        <img className="brand-logo" src="/vista-point-mark.svg" alt="" aria-hidden="true" />
+        <span className="brand-name">Vista Point</span>
+      </div>
+      <div className="app-context" aria-label="Состояние приложения">
+        {campaignName && <strong>{campaignName}</strong>}
+        {campaignName && <span aria-hidden="true">·</span>}
+        <span>Локально</span>
+        <span aria-hidden="true">·</span>
+        <span>Без сети</span>
+      </div>
+    </header>
+  )
+}
+
 interface CampaignOverviewProps {
   campaign: Campaign
   repository: CampaignRepository
@@ -58,40 +76,52 @@ function CampaignOverview({ campaign, repository, onBack, onRestored }: Campaign
   }
 
   return (
-    <main className="workspace">
-      <button className="text-button" onClick={onBack} type="button">
-        ← {ru.back}
-      </button>
-      <section className="campaign-header">
-        <p className="eyebrow">{ru.overview}</p>
-        <h1>{campaign.name}</h1>
-        <p>{campaign.description || 'Описание пока не добавлено.'}</p>
-        <div className="campaign-actions">
-          <button onClick={() => downloadCampaign(campaign)} type="button">
-            {ru.exportBackup}
-          </button>
-          <button disabled={!backups.length || isRestoring} onClick={restorePrevious} type="button">
-            {isRestoring ? 'Восстанавливаем…' : ru.restorePrevious}
-          </button>
-        </div>
+    <div className="app-window">
+      <BrandHeader campaignName={campaign.name} />
+      <main className="app-main campaign-overview">
+        <button className="text-button" onClick={onBack} type="button">
+          ← {ru.back}
+        </button>
+        <section className="campaign-summary">
+          <div>
+            <p className="overline">{ru.overview}</p>
+            <h1>{campaign.name}</h1>
+            <p className="summary-text">{campaign.description || 'Описание пока не добавлено.'}</p>
+          </div>
+          <div className="campaign-actions">
+            <button className="button button-secondary" onClick={() => downloadCampaign(campaign)} type="button">
+              {ru.exportBackup}
+            </button>
+            <button
+              className="button button-ghost"
+              disabled={!backups.length || isRestoring}
+              onClick={restorePrevious}
+              type="button"
+            >
+              {isRestoring ? 'Восстанавливаем…' : ru.restorePrevious}
+            </button>
+          </div>
+        </section>
+
         <p className="backup-count">{ru.localBackups}: {backups.length}</p>
-        {message && <p className="success" role="status">{message}</p>}
-        {error && <p className="error" role="alert">{error}</p>}
-      </section>
-      <section className="metric-grid" aria-label="Состояние кампании">
-        {counters.map(([label, value]) => (
-          <article className="metric" key={label}>
-            <span>{value}</span>
-            <p>{label}</p>
+        {message && <p className="feedback feedback-success" role="status">{message}</p>}
+        {error && <p className="feedback feedback-error" role="alert">{error}</p>}
+
+        <section className="metric-grid" aria-label="Состояние кампании">
+          {counters.map(([label, value]) => (
+            <article className="metric" key={label}>
+              <span>{value}</span>
+              <p>{label}</p>
+            </article>
+          ))}
+          <article className="metric metric-wide">
+            <span className="metric-date">{new Date(campaign.worldTime).toLocaleString('ru-RU')}</span>
+            <p>{ru.worldTime}</p>
           </article>
-        ))}
-        <article className="metric metric-wide">
-          <span className="metric-date">{new Date(campaign.worldTime).toLocaleString('ru-RU')}</span>
-          <p>{ru.worldTime}</p>
-        </article>
-      </section>
-      <aside className="notice">{ru.skeletonNotice}</aside>
-    </main>
+        </section>
+        <aside className="notice">{ru.skeletonNotice}</aside>
+      </main>
+    </div>
   )
 }
 
@@ -178,82 +208,88 @@ export default function App() {
   }
 
   return (
-    <main className="shell">
-      <header className="hero">
-        <div className="brand-mark" aria-hidden="true">VP</div>
-        <div>
-          <p className="eyebrow">{ru.appName}</p>
-          <h1>{ru.tagline}</h1>
-          <div className="badges">
-            <span>{ru.localBadge}</span>
-            <span>{ru.offlineBadge}</span>
+    <div className="app-window">
+      <BrandHeader />
+      <main className="app-main">
+        <section className="page-intro">
+          <div>
+            <p className="overline">Рабочее пространство мастера</p>
+            <h1>Точка обзора</h1>
+            <p>{ru.tagline}. Мир, связи и состояние кампании остаются под вашим контролем.</p>
           </div>
-        </div>
-      </header>
-
-      <section className="content-grid">
-        <div>
-          <div className="section-title">
-            <h2>{ru.campaigns}</h2>
-            <span>{campaigns.length}</span>
-          </div>
-          <div className="list-actions">
-            <button
-              className="secondary-button"
-              disabled={isImporting}
-              onClick={() => importInput.current?.click()}
-              type="button"
-            >
-              {isImporting ? ru.importing : ru.importCampaign}
-            </button>
-            <input
-              ref={importInput}
-              accept=".json,.vista-point.json,application/json"
-              className="visually-hidden"
-              onChange={handleImport}
-              type="file"
-            />
-          </div>
-          {message && <p className="success" role="status">{message}</p>}
-          {error && <p className="page-error" role="alert">{error}</p>}
-          {isLoading ? (
-            <p className="muted">{ru.loading}</p>
-          ) : campaigns.length === 0 ? (
-            <div className="empty-state">
-              <h3>{ru.emptyTitle}</h3>
-              <p>{ru.emptyText}</p>
-            </div>
-          ) : (
-            <div className="campaign-list">
-              {campaigns.map((campaign) => (
-                <article className="campaign-card" key={campaign.id}>
-                  <div>
-                    <h3>{campaign.name}</h3>
-                    <p>Изменено {new Date(campaign.updatedAt).toLocaleString('ru-RU')}</p>
-                  </div>
-                  <button onClick={() => setSelected(campaign)} type="button">{ru.open}</button>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <form className="create-card" onSubmit={handleSubmit}>
-          <p className="eyebrow">{ru.newCampaign}</p>
-          <label htmlFor="campaign-name">{ru.campaignName}</label>
-          <input
-            autoComplete="off"
-            id="campaign-name"
-            onChange={(event) => setName(event.target.value)}
-            placeholder={ru.campaignPlaceholder}
-            value={name}
-          />
-          <button className="primary-button" disabled={isSaving} type="submit">
-            {isSaving ? ru.creating : ru.create}
+          <button
+            className="button button-secondary"
+            disabled={isImporting}
+            onClick={() => importInput.current?.click()}
+            type="button"
+          >
+            {isImporting ? ru.importing : ru.importCampaign}
           </button>
-          <p className="privacy-note">Никаких аккаунтов и сетевой отправки данных.</p>
-        </form>
-      </section>
-    </main>
+          <input
+            ref={importInput}
+            accept=".json,.vista-point.json,application/json"
+            className="visually-hidden"
+            onChange={handleImport}
+            type="file"
+          />
+        </section>
+
+        {message && <p className="feedback feedback-success" role="status">{message}</p>}
+        {error && <p className="feedback feedback-error" role="alert">{error}</p>}
+
+        <section className="content-grid">
+          <div className="campaigns-section">
+            <div className="section-title">
+              <h2>{ru.campaigns}</h2>
+              <span aria-label={`${campaigns.length} кампаний`}>{campaigns.length}</span>
+            </div>
+            {isLoading ? (
+              <p className="muted">{ru.loading}</p>
+            ) : campaigns.length === 0 ? (
+              <div className="empty-state">
+                <img src="/vista-point-mark.svg" alt="" aria-hidden="true" />
+                <div>
+                  <h3>{ru.emptyTitle}</h3>
+                  <p>{ru.emptyText}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="campaign-list">
+                {campaigns.map((campaign) => (
+                  <article className="campaign-card" key={campaign.id}>
+                    <span className="campaign-indicator" aria-hidden="true" />
+                    <div>
+                      <h3>{campaign.name}</h3>
+                      <p>Изменено {new Date(campaign.updatedAt).toLocaleString('ru-RU')}</p>
+                    </div>
+                    <button className="link-button" onClick={() => setSelected(campaign)} type="button">
+                      {ru.open} →
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <form className="create-card" onSubmit={handleSubmit}>
+            <p className="overline">{ru.newCampaign}</p>
+            <h2>Начните новый мир</h2>
+            <p className="form-intro">Достаточно названия — остальные детали можно добавить позже.</p>
+            <label htmlFor="campaign-name">{ru.campaignName}</label>
+            <input
+              autoComplete="off"
+              id="campaign-name"
+              onChange={(event) => setName(event.target.value)}
+              placeholder={ru.campaignPlaceholder}
+              value={name}
+            />
+            <button className="button button-primary button-block" disabled={isSaving} type="submit">
+              {isSaving ? ru.creating : ru.create}
+            </button>
+            <p className="privacy-note">Без аккаунта и отправки данных в сеть.</p>
+          </form>
+        </section>
+      </main>
+    </div>
   )
 }

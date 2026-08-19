@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Vista Point</title>
+  <desc id="description">Минималистичный маяк цвета слоновой кости на мятном фоне</desc>
+  <rect width="512" height="512" rx="128" fill="#68B49D"/>
+  <g fill="none" stroke="#FFF8E7" stroke-linecap="round" stroke-linejoin="round" stroke-width="26">
+    <path d="M154 184 76 146M358 184l78-38M164 105l-54 32M348 105l54 32"/>
+    <path d="M186 203h140l38 239H148l38-239Z"/>
+    <path d="M128 442h256M205 312h102"/>
+  </g>
+  <path d="M185 171h142l-26-100h-90l-26 100Z" fill="#FFF8E7"/>
+</svg>
