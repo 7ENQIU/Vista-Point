@@ -599,13 +599,100 @@ textarea { min-height: 82px; resize: vertical; }
   font-weight: 500;
 }
 
-.relationship-source-options {
+.relationship-source-search-label {
+  margin: 0 0 var(--space-2) !important;
+  font-size: 11px;
+}
+
+.relationship-source-search {
+  position: relative;
+  margin-bottom: var(--space-3);
+}
+
+.relationship-source-search input {
+  min-height: 40px;
+  padding-right: 38px;
+  background: var(--color-ivory-100);
+}
+
+.relationship-source-search button {
+  position: absolute;
+  top: 50%;
+  right: 6px;
   display: grid;
-  max-height: 190px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 50%;
+  color: var(--color-graphite-500);
+  background: transparent;
+  font-size: 18px;
+}
+
+.relationship-source-search button:hover { background: var(--color-mint-100); }
+
+.relationship-selected-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.relationship-selected-sources button {
+  max-width: 100%;
+  padding: 5px 9px;
+  overflow: hidden;
+  border: 1px solid var(--color-mint-500);
+  border-radius: 999px;
+  color: var(--color-mint-800);
+  background: var(--color-mint-100);
+  font-family: var(--font-heading);
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relationship-selected-sources button:hover { background: var(--color-mint-200); }
+.relationship-selected-sources span { margin-left: var(--space-1); font-size: 12px; }
+
+.relationship-source-options {
+  max-height: 280px;
   overflow-y: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-ivory-100);
+}
+
+.relationship-source-group h3 {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 7px 11px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-mint-800);
+  background: var(--color-ivory-200);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.relationship-source-group h3 span {
+  display: grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-ivory-50);
+  font-size: 9px;
 }
 
 .relationship-source-option {
@@ -647,8 +734,27 @@ textarea { min-height: 82px; resize: vertical; }
 }
 
 .relationship-source-option small {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--color-graphite-500);
   font-size: 9px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.relationship-source-empty {
+  margin: 0;
+  padding: var(--space-5);
+  color: var(--color-graphite-500);
+  font-size: 10px;
+  text-align: center;
+}
+
+.relationship-source-hint {
+  margin: var(--space-2) 0 0;
+  color: var(--color-graphite-500);
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .form-hint {

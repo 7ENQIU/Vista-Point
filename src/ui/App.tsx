@@ -27,6 +27,7 @@ import { IndexedDbCampaignRepository } from '../infrastructure/storage/IndexedDb
 import { ru } from '../shared/i18n/ru'
 import { CampaignGraph } from './CampaignGraph'
 import { downloadCampaign } from './downloadCampaign'
+import { groupRelationshipSources } from './groupRelationshipSources'
 
 function BrandHeader({ campaignName }: { campaignName?: string }) {
   return (
@@ -63,6 +64,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [entitySummary, setEntitySummary] = useState('')
   const [isCreatingEntity, setIsCreatingEntity] = useState(false)
   const [relationshipSourceIds, setRelationshipSourceIds] = useState<string[]>([])
+  const [relationshipSourceSearch, setRelationshipSourceSearch] = useState('')
   const [relationshipTargetId, setRelationshipTargetId] = useState('')
   const [relationshipType, setRelationshipType] = useState<RelationshipType>('located_in')
   const [relationshipDescription, setRelationshipDescription] = useState('')
@@ -76,6 +78,19 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     relationship.status !== 'archived' &&
     activeEntityIds.has(relationship.sourceId) &&
     activeEntityIds.has(relationship.targetId))
+  const availableSourceEntities = activeEntities.filter(
+    (entity) => entity.id !== relationshipTargetId,
+  )
+  const sourceGroups = groupRelationshipSources(availableSourceEntities, relationshipSourceSearch)
+  const targetGroups = groupRelationshipSources(activeEntities, '')
+  const visibleSourceCount = sourceGroups.reduce(
+    (count, group) => count + group.entities.length,
+    0,
+  )
+  const selectedSourceEntities = relationshipSourceIds.flatMap((id) => {
+    const entity = activeEntities.find((item) => item.id === id)
+    return entity ? [entity] : []
+  })
   const counters = [
     [ru.entities, activeEntities.length],
     [ru.relationships, activeRelationships.length],
@@ -146,6 +161,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
         })),
       )
       setRelationshipSourceIds([])
+      setRelationshipSourceSearch('')
       setRelationshipTargetId('')
       setRelationshipDescription('')
       onCampaignChanged(result.campaign)
@@ -382,30 +398,77 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             )}
             <fieldset className="relationship-source-fieldset">
               <legend>{ru.relationshipSources}</legend>
-              <div className="relationship-source-summary">
-                <span>{ru.relationshipSourcesHint}</span>
+              <div className="relationship-source-summary" aria-live="polite">
+                <span>{ru.relationshipSourcesFound}: {visibleSourceCount}</span>
                 <strong>{ru.relationshipSourcesSelected}: {relationshipSourceIds.length}</strong>
               </div>
+              <label className="relationship-source-search-label" htmlFor="relationship-source-search">
+                {ru.relationshipSourcesSearch}
+              </label>
+              <div className="relationship-source-search">
+                <input
+                  autoComplete="off"
+                  id="relationship-source-search"
+                  onChange={(event) => setRelationshipSourceSearch(event.target.value)}
+                  placeholder={ru.relationshipSourcesSearchPlaceholder}
+                  type="search"
+                  value={relationshipSourceSearch}
+                />
+                {relationshipSourceSearch && (
+                  <button
+                    aria-label={ru.clearSearch}
+                    onClick={() => setRelationshipSourceSearch('')}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {selectedSourceEntities.length > 0 && (
+                <div className="relationship-selected-sources" aria-label={ru.relationshipSourcesSelected}>
+                  {selectedSourceEntities.map((entity) => (
+                    <button
+                      aria-label={`Убрать ${entity.name} из выбранных`}
+                      key={entity.id}
+                      onClick={() => setRelationshipSourceIds((current) =>
+                        current.filter((id) => id !== entity.id))}
+                      type="button"
+                    >
+                      {entity.name} <span aria-hidden="true">×</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="relationship-source-options">
-                {activeEntities.map((entity) => (
-                  <label className="relationship-source-option" key={entity.id}>
-                    <input
-                      checked={relationshipSourceIds.includes(entity.id)}
-                      disabled={entity.id === relationshipTargetId}
-                      onChange={(event) => {
-                        setRelationshipSourceIds((current) => event.target.checked
-                          ? [...current, entity.id]
-                          : current.filter((id) => id !== entity.id))
-                      }}
-                      type="checkbox"
-                    />
-                    <span>
-                      <strong>{entity.name}</strong>
-                      <small>{ru.entityTypes[entity.type]}</small>
-                    </span>
-                  </label>
+                {sourceGroups.length === 0 ? (
+                  <p className="relationship-source-empty">{ru.relationshipSourcesEmpty}</p>
+                ) : sourceGroups.map((group) => (
+                  <section className="relationship-source-group" key={group.type}>
+                    <h3>
+                      {ru.entityTypes[group.type]}
+                      <span>{group.entities.length}</span>
+                    </h3>
+                    {group.entities.map((entity) => (
+                      <label className="relationship-source-option" key={entity.id}>
+                        <input
+                          checked={relationshipSourceIds.includes(entity.id)}
+                          onChange={(event) => {
+                            setRelationshipSourceIds((current) => event.target.checked
+                              ? [...current, entity.id]
+                              : current.filter((id) => id !== entity.id))
+                          }}
+                          type="checkbox"
+                        />
+                        <span>
+                          <strong>{entity.name}</strong>
+                          <small>{entity.summary || ru.noEntitySummary}</small>
+                        </span>
+                      </label>
+                    ))}
+                  </section>
                 ))}
               </div>
+              <p className="relationship-source-hint">{ru.relationshipSourcesHint}</p>
             </fieldset>
             <label htmlFor="relationship-type">{ru.relationshipType}</label>
             <select
@@ -428,10 +491,14 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
               value={relationshipTargetId}
             >
               <option value="">{ru.selectEntity}</option>
-              {activeEntities.map((entity) => (
-                <option disabled={relationshipSourceIds.includes(entity.id)} key={entity.id} value={entity.id}>
-                  {entity.name} · {ru.entityTypes[entity.type]}
-                </option>
+              {targetGroups.map((group) => (
+                <optgroup key={group.type} label={ru.entityTypes[group.type]}>
+                  {group.entities.map((entity) => (
+                    <option disabled={relationshipSourceIds.includes(entity.id)} key={entity.id} value={entity.id}>
+                      {entity.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             <label htmlFor="relationship-description">{ru.relationshipDescription}</label>
