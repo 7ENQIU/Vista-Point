@@ -132,9 +132,16 @@ function edgePoint(
 }
 
 export function buildCampaignGraph(campaign: Campaign): CampaignGraphProjection {
-  const displayRelationships = campaign.relationships.map(toDisplayRelationship)
+  const activeEntities = campaign.entities.filter((entity) => entity.status !== 'archived')
+  const activeEntityIds = new Set(activeEntities.map((entity) => entity.id))
+  const displayRelationships = campaign.relationships
+    .filter((relationship) =>
+      relationship.status !== 'archived' &&
+      activeEntityIds.has(relationship.sourceId) &&
+      activeEntityIds.has(relationship.targetId))
+    .map(toDisplayRelationship)
   const levels = buildLevels(
-    campaign.entities.map((entity) => entity.id),
+    activeEntities.map((entity) => entity.id),
     displayRelationships,
   )
   const maxLevel = Math.max(0, ...levels.values())
@@ -145,7 +152,7 @@ export function buildCampaignGraph(campaign: Campaign): CampaignGraphProjection 
   const width = Math.max(GRAPH_WIDTH, horizontalMargin * 2 + maxLevel * columnGap)
   const entitiesByLevel = new Map<number, CampaignEntity[]>()
 
-  for (const entity of campaign.entities) {
+  for (const entity of activeEntities) {
     const level = levels.get(entity.id) ?? 0
     entitiesByLevel.set(level, [...(entitiesByLevel.get(level) ?? []), entity])
   }

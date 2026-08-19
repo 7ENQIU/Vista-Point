@@ -44,7 +44,12 @@ export function addRelationshipToCampaign(
   if (!source || !target) {
     throw new Error('Источник или цель связи не найдены в кампании.')
   }
-  if (campaign.relationships.some((relationship) => isSameRelationship(relationship, input))) {
+  if (source.status === 'archived' || target.status === 'archived') {
+    throw new Error('Нельзя создать связь с удалённой сущностью.')
+  }
+  if (campaign.relationships.some(
+    (relationship) => relationship.status !== 'archived' && isSameRelationship(relationship, input),
+  )) {
     throw new Error('Такая связь уже существует.')
   }
 

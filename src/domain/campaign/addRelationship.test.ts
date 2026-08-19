@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { addEntityToCampaign } from './addEntity'
 import { addRelationshipToCampaign } from './addRelationship'
+import { archiveRelationshipInCampaign } from './archiveCampaignItem'
 import { createCampaign } from './createCampaign'
 
 function campaignWithTwoEntities() {
@@ -44,5 +45,19 @@ describe('addRelationshipToCampaign', () => {
     expect(() => addRelationshipToCampaign(first.campaign, {
       sourceId: 'e2', targetId: 'e1', type: 'opposes', directed: false,
     })).toThrow('уже существует')
+  })
+
+  it('разрешает заново создать ранее архивированную связь', () => {
+    const first = addRelationshipToCampaign(campaignWithTwoEntities(), {
+      sourceId: 'e1', targetId: 'e2', type: 'located_in', directed: true,
+    }, { relationshipId: 'r1' })
+    const archived = archiveRelationshipInCampaign(first.campaign, 'r1')
+
+    const recreated = addRelationshipToCampaign(archived.campaign, {
+      sourceId: 'e1', targetId: 'e2', type: 'located_in', directed: true,
+    }, { relationshipId: 'r2' })
+
+    expect(recreated.relationship.id).toBe('r2')
+    expect(recreated.campaign.relationships).toHaveLength(2)
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { addEntityToCampaign } from '../../domain/campaign/addEntity'
 import { addRelationshipToCampaign } from '../../domain/campaign/addRelationship'
 import { createCampaign } from '../../domain/campaign/createCampaign'
+import { archiveEntityInCampaign, archiveRelationshipInCampaign } from '../../domain/campaign/archiveCampaignItem'
 import { buildCampaignGraph, getFocusedGraphContext, GRAPH_WIDTH } from './buildCampaignGraph'
 
 function relatedCampaign() {
@@ -82,5 +83,20 @@ describe('buildCampaignGraph', () => {
     expect(edge.target.entity.id).toBe('npc')
     expect(edge.source.x).toBeLessThan(edge.target.x)
     expect(edge.displayType).toBe('includes_participant')
+  })
+
+  it('не показывает архивные сущности и связи', () => {
+    const campaign = relatedCampaign()
+    const graphWithoutRelationship = buildCampaignGraph(
+      archiveRelationshipInCampaign(campaign, campaign.relationships[0].id).campaign,
+    )
+    const graphWithoutEntity = buildCampaignGraph(
+      archiveEntityInCampaign(campaign, 'e1').campaign,
+    )
+
+    expect(graphWithoutRelationship.nodes).toHaveLength(3)
+    expect(graphWithoutRelationship.edges).toHaveLength(1)
+    expect(graphWithoutEntity.nodes.some((node) => node.entity.id === 'e1')).toBe(false)
+    expect(graphWithoutEntity.edges).toHaveLength(0)
   })
 })

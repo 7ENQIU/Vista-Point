@@ -6,6 +6,10 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from 'react'
+import {
+  archiveAndSaveEntity,
+  archiveAndSaveRelationship,
+} from '../application/campaigns/archiveAndSaveCampaignItem'
 import { createAndSaveCampaign } from '../application/campaigns/createAndSaveCampaign'
 import { createAndSaveEntity } from '../application/campaigns/createAndSaveEntity'
 import { createAndSaveRelationships } from '../application/campaigns/createAndSaveRelationship'
@@ -64,9 +68,17 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [relationshipDescription, setRelationshipDescription] = useState('')
   const [relationshipDirected, setRelationshipDirected] = useState(true)
   const [isCreatingRelationship, setIsCreatingRelationship] = useState(false)
+  const [archivingEntityId, setArchivingEntityId] = useState('')
+  const [archivingRelationshipId, setArchivingRelationshipId] = useState('')
+  const activeEntities = campaign.entities.filter((entity) => entity.status !== 'archived')
+  const activeEntityIds = new Set(activeEntities.map((entity) => entity.id))
+  const activeRelationships = campaign.relationships.filter((relationship) =>
+    relationship.status !== 'archived' &&
+    activeEntityIds.has(relationship.sourceId) &&
+    activeEntityIds.has(relationship.targetId))
   const counters = [
-    [ru.entities, campaign.entities.length],
-    [ru.relationships, campaign.relationships.length],
+    [ru.entities, activeEntities.length],
+    [ru.relationships, activeRelationships.length],
     [ru.events, campaign.eventLog.length],
   ] as const
 
@@ -149,6 +161,55 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     }
   }
 
+  async function handleArchiveRelationship(relationshipId: string) {
+    const relationship = activeRelationships.find((item) => item.id === relationshipId)
+    if (!relationship || !window.confirm(ru.deleteRelationshipConfirm)) return
+
+    setError('')
+    setMessage('')
+    setArchivingRelationshipId(relationshipId)
+    try {
+      const result = await archiveAndSaveRelationship(repository, campaign, relationshipId)
+      onCampaignChanged(result.campaign)
+      setMessage(ru.relationshipDeleted)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+    } finally {
+      setArchivingRelationshipId('')
+    }
+  }
+
+  async function handleArchiveEntity(entityId: string) {
+    const entity = activeEntities.find((item) => item.id === entityId)
+    if (!entity) return
+    const relationshipCount = activeRelationships.filter(
+      (relationship) => relationship.sourceId === entityId || relationship.targetId === entityId,
+    ).length
+    const confirmation = relationshipCount > 0
+      ? `Удалить «${entity.name}» из рабочих представлений? Вместе с сущностью будут убраны связанные отношения: ${relationshipCount}. Данные сохранятся в архиве кампании.`
+      : `Удалить «${entity.name}» из рабочих представлений? Данные сохранятся в архиве кампании.`
+    if (!window.confirm(confirmation)) return
+
+    setError('')
+    setMessage('')
+    setArchivingEntityId(entityId)
+    try {
+      const result = await archiveAndSaveEntity(repository, campaign, entityId)
+      setRelationshipSourceIds((current) => current.filter((id) => id !== entityId))
+      if (relationshipTargetId === entityId) setRelationshipTargetId('')
+      onCampaignChanged(result.campaign)
+      setMessage(
+        result.archivedRelationships.length > 0
+          ? `Сущность удалена из рабочих представлений. Связей перенесено в архив: ${result.archivedRelationships.length}.`
+          : ru.entityDeleted,
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+    } finally {
+      setArchivingEntityId('')
+    }
+  }
+
   const entityNames = new Map(campaign.entities.map((entity) => [entity.id, entity.name]))
 
   return (
@@ -203,15 +264,15 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                 <p className="overline">{ru.preparationMode}</p>
                 <h2 id="entities-heading">{ru.entities}</h2>
               </div>
-              <span aria-label={`${campaign.entities.length} сущностей`}>
-                {campaign.entities.length}
+              <span aria-label={`${activeEntities.length} сущностей`}>
+                {activeEntities.length}
               </span>
             </div>
-            {campaign.entities.length === 0 ? (
+            {activeEntities.length === 0 ? (
               <p className="entity-empty">{ru.noEntities}</p>
             ) : (
               <div className="entity-list">
-                {[...campaign.entities].reverse().map((entity) => (
+                {[...activeEntities].reverse().map((entity) => (
                   <article className="entity-row" key={entity.id}>
                     <span className="entity-type-mark" aria-hidden="true" />
                     <div>
@@ -222,6 +283,14 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                       <p>{entity.summary || 'Короткая заметка не добавлена.'}</p>
                     </div>
                     <strong>{ru.entityTypes[entity.type]}</strong>
+                    <button
+                      className="danger-link"
+                      disabled={archivingEntityId === entity.id}
+                      onClick={() => handleArchiveEntity(entity.id)}
+                      type="button"
+                    >
+                      {archivingEntityId === entity.id ? ru.deleting : ru.delete}
+                    </button>
                   </article>
                 ))}
               </div>
@@ -270,15 +339,15 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                 <p className="overline">Структура кампании</p>
                 <h2 id="relationships-heading">{ru.relationships}</h2>
               </div>
-              <span aria-label={`${campaign.relationships.length} связей`}>
-                {campaign.relationships.length}
+              <span aria-label={`${activeRelationships.length} связей`}>
+                {activeRelationships.length}
               </span>
             </div>
-            {campaign.relationships.length === 0 ? (
+            {activeRelationships.length === 0 ? (
               <p className="relationship-empty">{ru.noRelationships}</p>
             ) : (
               <div className="relationship-list">
-                {[...campaign.relationships].reverse().map((relationship) => (
+                {[...activeRelationships].reverse().map((relationship) => (
                   <article className="relationship-row" key={relationship.id}>
                     <div className="relationship-route">
                       <strong>{entityNames.get(relationship.sourceId) ?? 'Неизвестная сущность'}</strong>
@@ -291,6 +360,14 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                       <span>{ru.relationshipTypes[relationship.type]}</span>
                       {relationship.description && <p>{relationship.description}</p>}
                     </div>
+                    <button
+                      className="danger-link"
+                      disabled={archivingRelationshipId === relationship.id}
+                      onClick={() => handleArchiveRelationship(relationship.id)}
+                      type="button"
+                    >
+                      {archivingRelationshipId === relationship.id ? ru.deleting : ru.delete}
+                    </button>
                   </article>
                 ))}
               </div>
@@ -300,7 +377,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
           <form className="relationship-create" onSubmit={handleRelationshipSubmit}>
             <p className="overline">{ru.relationshipBuilder}</p>
             <h2>Связать сущности</h2>
-            {campaign.entities.length < 2 && (
+            {activeEntities.length < 2 && (
               <p className="form-hint">{ru.relationshipNeedsEntities}</p>
             )}
             <fieldset className="relationship-source-fieldset">
@@ -310,7 +387,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                 <strong>{ru.relationshipSourcesSelected}: {relationshipSourceIds.length}</strong>
               </div>
               <div className="relationship-source-options">
-                {campaign.entities.map((entity) => (
+                {activeEntities.map((entity) => (
                   <label className="relationship-source-option" key={entity.id}>
                     <input
                       checked={relationshipSourceIds.includes(entity.id)}
@@ -351,7 +428,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
               value={relationshipTargetId}
             >
               <option value="">{ru.selectEntity}</option>
-              {campaign.entities.map((entity) => (
+              {activeEntities.map((entity) => (
                 <option disabled={relationshipSourceIds.includes(entity.id)} key={entity.id} value={entity.id}>
                   {entity.name} · {ru.entityTypes[entity.type]}
                 </option>
@@ -377,7 +454,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             <button
               className="button button-primary button-block"
               disabled={
-                campaign.entities.length < 2 ||
+                activeEntities.length < 2 ||
                 relationshipSourceIds.length === 0 ||
                 !relationshipTargetId ||
                 isCreatingRelationship

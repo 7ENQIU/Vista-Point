@@ -401,7 +401,7 @@ textarea { min-height: 82px; resize: vertical; }
 
 .entity-row {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
   gap: var(--space-3);
   align-items: center;
   padding: 16px 4px;
@@ -495,7 +495,7 @@ textarea { min-height: 82px; resize: vertical; }
 
 .relationship-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(160px, 0.8fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(160px, 0.8fr) auto;
   gap: var(--space-5);
   align-items: center;
   padding: 16px 4px;
@@ -538,6 +538,19 @@ textarea { min-height: 82px; resize: vertical; }
   font-size: 10px;
   line-height: 1.5;
 }
+
+.danger-link {
+  padding: 5px;
+  border: 0;
+  color: var(--color-danger-text);
+  background: transparent;
+  font-family: var(--font-heading);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.danger-link:hover:not(:disabled) { text-decoration: underline; }
+.danger-link:disabled { cursor: wait; opacity: 0.55; }
 
 .relationship-create {
   padding: 26px;
@@ -942,7 +955,9 @@ textarea { min-height: 82px; resize: vertical; }
   .campaign-card .link-button { grid-column: 2; justify-self: start; margin-left: -5px; }
   .entity-row { grid-template-columns: 10px minmax(0, 1fr); }
   .entity-row > strong { grid-column: 2; }
+  .entity-row > .danger-link { grid-column: 2; justify-self: start; margin-left: -5px; }
   .relationship-row { grid-template-columns: 1fr; gap: var(--space-2); }
+  .relationship-row > .danger-link { justify-self: start; margin-left: -5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -8,6 +8,7 @@ import {
 import { createCampaign } from './createCampaign'
 import { addEntityToCampaign } from './addEntity'
 import { addRelationshipToCampaign } from './addRelationship'
+import { archiveEntityInCampaign } from './archiveCampaignItem'
 
 const now = new Date('2026-08-19T18:00:00.000Z')
 
@@ -61,5 +62,17 @@ describe('campaign file', () => {
     expect(() => parseCampaignFile(JSON.stringify(file))).toThrow(
       'повторяющиеся идентификаторы связей',
     )
+  })
+
+  it('сохраняет архивные сущности и их историю при экспорте', () => {
+    const campaign = createCampaign({ name: 'Архив' }, now, 'campaign-1')
+    const withEntity = addEntityToCampaign(
+      campaign,
+      { type: 'npc', name: 'Старый NPC' },
+      { entityId: 'e1' },
+    ).campaign
+    const archived = archiveEntityInCampaign(withEntity, 'e1', { eventId: 'archive-e1' }).campaign
+
+    expect(parseCampaignFile(serializeCampaignFile(archived, now))).toEqual(archived)
   })
 })
