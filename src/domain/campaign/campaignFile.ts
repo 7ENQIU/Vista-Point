@@ -1,5 +1,7 @@
 import {
   CAMPAIGN_SCHEMA_VERSION,
+  ENTITY_TYPES,
+  RELATIONSHIP_TYPES,
   type Campaign,
   type CampaignEntity,
   type CampaignEvent,
@@ -45,6 +47,7 @@ function isEntity(value: unknown, campaignId: string): value is CampaignEntity {
     isString(value.id) &&
     value.campaignId === campaignId &&
     isString(value.type) &&
+    ENTITY_TYPES.includes(value.type as CampaignEntity['type']) &&
     isString(value.name) &&
     isStringArray(value.aliases) &&
     isString(value.summary) &&
@@ -66,6 +69,7 @@ function isRelationship(value: unknown, campaignId: string): value is Relationsh
     isString(value.sourceId) &&
     isString(value.targetId) &&
     isString(value.type) &&
+    RELATIONSHIP_TYPES.includes(value.type as Relationship['type']) &&
     typeof value.directed === 'boolean' &&
     isString(value.description) &&
     isString(value.status) &&
@@ -127,8 +131,20 @@ function validateCampaign(value: unknown): Campaign {
     throw new CampaignFileError('В кампании обнаружены повторяющиеся идентификаторы сущностей.')
   }
 
+  const relationshipIds = new Set(value.relationships.map((relationship) => relationship.id))
+  if (relationshipIds.size !== value.relationships.length) {
+    throw new CampaignFileError('В кампании обнаружены повторяющиеся идентификаторы связей.')
+  }
+  const eventIds = new Set(value.eventLog.map((event) => event.id))
+  if (eventIds.size !== value.eventLog.length) {
+    throw new CampaignFileError('В кампании обнаружены повторяющиеся идентификаторы событий.')
+  }
+
   const hasBrokenRelationships = value.relationships.some(
-    (relationship) => !entityIds.has(relationship.sourceId) || !entityIds.has(relationship.targetId),
+    (relationship) =>
+      relationship.sourceId === relationship.targetId ||
+      !entityIds.has(relationship.sourceId) ||
+      !entityIds.has(relationship.targetId),
   )
   const hasBrokenEventLinks = value.eventLog.some((event) =>
     event.relatedEntityIds.some((id) => !entityIds.has(id)),

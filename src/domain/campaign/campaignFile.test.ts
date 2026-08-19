@@ -6,6 +6,8 @@ import {
   serializeCampaignFile,
 } from './campaignFile'
 import { createCampaign } from './createCampaign'
+import { addEntityToCampaign } from './addEntity'
+import { addRelationshipToCampaign } from './addRelationship'
 
 const now = new Date('2026-08-19T18:00:00.000Z')
 
@@ -43,6 +45,21 @@ describe('campaign file', () => {
 
     expect(() => parseCampaignFile(JSON.stringify(file))).toThrow(
       'ссылки на отсутствующие сущности',
+    )
+  })
+
+  it('отклоняет повторяющиеся идентификаторы связей', () => {
+    const campaign = createCampaign({ name: 'Архив' }, now, 'campaign-1')
+    const first = addEntityToCampaign(campaign, { type: 'npc', name: 'NPC' }, { entityId: 'e1' })
+    const second = addEntityToCampaign(first.campaign, { type: 'location', name: 'Локация' }, { entityId: 'e2' })
+    const related = addRelationshipToCampaign(second.campaign, {
+      sourceId: 'e1', targetId: 'e2', type: 'located_in', directed: true,
+    }, { relationshipId: 'relation-1' }).campaign
+    const file = JSON.parse(serializeCampaignFile(related, now))
+    file.campaign.relationships.push({ ...file.campaign.relationships[0], type: 'knows' })
+
+    expect(() => parseCampaignFile(JSON.stringify(file))).toThrow(
+      'повторяющиеся идентификаторы связей',
     )
   })
 })

@@ -1,15 +1,25 @@
 export const CAMPAIGN_SCHEMA_VERSION = 1 as const
 
-export type EntityType =
-  | 'location'
-  | 'npc'
-  | 'scene'
-  | 'clue'
-  | 'event'
-  | 'encounter'
+export const ENTITY_TYPES = ['location', 'npc', 'scene', 'clue', 'event', 'encounter'] as const
+export type EntityType = (typeof ENTITY_TYPES)[number]
 
 export type LifecycleStatus = 'draft' | 'active' | 'archived'
 export type Visibility = 'game_master' | 'party' | 'public'
+export const RELATIONSHIP_TYPES = [
+  'located_in',
+  'belongs_to',
+  'knows',
+  'controls',
+  'depends_on',
+  'discovers',
+  'blocks',
+  'causes',
+  'reveals',
+  'opposes',
+  'contains',
+  'transitions_to',
+] as const
+export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number]
 
 export interface CampaignEntity {
   id: string
@@ -32,7 +42,7 @@ export interface Relationship {
   campaignId: string
   sourceId: string
   targetId: string
-  type: string
+  type: RelationshipType
   directed: boolean
   description: string
   status: LifecycleStatus

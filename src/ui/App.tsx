@@ -8,10 +8,17 @@ import {
 } from 'react'
 import { createAndSaveCampaign } from '../application/campaigns/createAndSaveCampaign'
 import { createAndSaveEntity } from '../application/campaigns/createAndSaveEntity'
+import { createAndSaveRelationship } from '../application/campaigns/createAndSaveRelationship'
 import { importCampaignFile } from '../application/campaigns/importCampaignFile'
 import type { CampaignBackup, CampaignRepository } from '../application/ports/CampaignRepository'
 import { parseCampaignFile } from '../domain/campaign/campaignFile'
-import type { Campaign, EntityType } from '../domain/campaign/types'
+import {
+  ENTITY_TYPES,
+  RELATIONSHIP_TYPES,
+  type Campaign,
+  type EntityType,
+  type RelationshipType,
+} from '../domain/campaign/types'
 import { IndexedDbCampaignRepository } from '../infrastructure/storage/IndexedDbCampaignRepository'
 import { ru } from '../shared/i18n/ru'
 import { downloadCampaign } from './downloadCampaign'
@@ -34,15 +41,6 @@ function BrandHeader({ campaignName }: { campaignName?: string }) {
   )
 }
 
-const CREATABLE_ENTITY_TYPES: EntityType[] = [
-  'location',
-  'npc',
-  'scene',
-  'clue',
-  'event',
-  'encounter',
-]
-
 interface CampaignOverviewProps {
   campaign: Campaign
   repository: CampaignRepository
@@ -59,6 +57,12 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [entityName, setEntityName] = useState('')
   const [entitySummary, setEntitySummary] = useState('')
   const [isCreatingEntity, setIsCreatingEntity] = useState(false)
+  const [relationshipSourceId, setRelationshipSourceId] = useState('')
+  const [relationshipTargetId, setRelationshipTargetId] = useState('')
+  const [relationshipType, setRelationshipType] = useState<RelationshipType>('located_in')
+  const [relationshipDescription, setRelationshipDescription] = useState('')
+  const [relationshipDirected, setRelationshipDirected] = useState(true)
+  const [isCreatingRelationship, setIsCreatingRelationship] = useState(false)
   const counters = [
     [ru.entities, campaign.entities.length],
     [ru.relationships, campaign.relationships.length],
@@ -110,6 +114,33 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
       setIsCreatingEntity(false)
     }
   }
+
+  async function handleRelationshipSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError('')
+    setMessage('')
+    setIsCreatingRelationship(true)
+    try {
+      const result = await createAndSaveRelationship(repository, campaign, {
+        sourceId: relationshipSourceId,
+        targetId: relationshipTargetId,
+        type: relationshipType,
+        directed: relationshipDirected,
+        description: relationshipDescription,
+      })
+      setRelationshipSourceId('')
+      setRelationshipTargetId('')
+      setRelationshipDescription('')
+      onCampaignChanged(result.campaign)
+      setMessage(ru.relationshipCreated)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+    } finally {
+      setIsCreatingRelationship(false)
+    }
+  }
+
+  const entityNames = new Map(campaign.entities.map((entity) => [entity.id, entity.name]))
 
   return (
     <div className="app-window">
@@ -197,7 +228,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
               onChange={(event) => setEntityType(event.target.value as EntityType)}
               value={entityType}
             >
-              {CREATABLE_ENTITY_TYPES.map((type) => (
+              {ENTITY_TYPES.map((type) => (
                 <option key={type} value={type}>{ru.entityTypes[type]}</option>
               ))}
             </select>
@@ -219,6 +250,114 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             />
             <button className="button button-primary button-block" disabled={isCreatingEntity} type="submit">
               {isCreatingEntity ? 'Создаём…' : ru.createEntity}
+            </button>
+          </form>
+        </section>
+
+        <section className="relationship-workspace" aria-labelledby="relationships-heading">
+          <div className="relationship-list-panel">
+            <div className="section-title relationship-section-title">
+              <div>
+                <p className="overline">Структура кампании</p>
+                <h2 id="relationships-heading">{ru.relationships}</h2>
+              </div>
+              <span aria-label={`${campaign.relationships.length} связей`}>
+                {campaign.relationships.length}
+              </span>
+            </div>
+            {campaign.relationships.length === 0 ? (
+              <p className="relationship-empty">{ru.noRelationships}</p>
+            ) : (
+              <div className="relationship-list">
+                {[...campaign.relationships].reverse().map((relationship) => (
+                  <article className="relationship-row" key={relationship.id}>
+                    <div className="relationship-route">
+                      <strong>{entityNames.get(relationship.sourceId) ?? 'Неизвестная сущность'}</strong>
+                      <span aria-label={relationship.directed ? 'направленная связь' : 'ненаправленная связь'}>
+                        {relationship.directed ? '→' : '↔'}
+                      </span>
+                      <strong>{entityNames.get(relationship.targetId) ?? 'Неизвестная сущность'}</strong>
+                    </div>
+                    <div className="relationship-meta">
+                      <span>{ru.relationshipTypes[relationship.type]}</span>
+                      {relationship.description && <p>{relationship.description}</p>}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <form className="relationship-create" onSubmit={handleRelationshipSubmit}>
+            <p className="overline">{ru.relationshipBuilder}</p>
+            <h2>Связать сущности</h2>
+            {campaign.entities.length < 2 && (
+              <p className="form-hint">{ru.relationshipNeedsEntities}</p>
+            )}
+            <label htmlFor="relationship-source">{ru.relationshipSource}</label>
+            <select
+              id="relationship-source"
+              onChange={(event) => setRelationshipSourceId(event.target.value)}
+              value={relationshipSourceId}
+            >
+              <option value="">{ru.selectEntity}</option>
+              {campaign.entities.map((entity) => (
+                <option disabled={entity.id === relationshipTargetId} key={entity.id} value={entity.id}>
+                  {entity.name} · {ru.entityTypes[entity.type]}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="relationship-type">{ru.relationshipType}</label>
+            <select
+              id="relationship-type"
+              onChange={(event) => setRelationshipType(event.target.value as RelationshipType)}
+              value={relationshipType}
+            >
+              {RELATIONSHIP_TYPES.map((type) => (
+                <option key={type} value={type}>{ru.relationshipTypes[type]}</option>
+              ))}
+            </select>
+            <label htmlFor="relationship-target">{ru.relationshipTarget}</label>
+            <select
+              id="relationship-target"
+              onChange={(event) => setRelationshipTargetId(event.target.value)}
+              value={relationshipTargetId}
+            >
+              <option value="">{ru.selectEntity}</option>
+              {campaign.entities.map((entity) => (
+                <option disabled={entity.id === relationshipSourceId} key={entity.id} value={entity.id}>
+                  {entity.name} · {ru.entityTypes[entity.type]}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="relationship-description">{ru.relationshipDescription}</label>
+            <textarea
+              id="relationship-description"
+              onChange={(event) => setRelationshipDescription(event.target.value)}
+              placeholder={ru.relationshipDescriptionPlaceholder}
+              rows={3}
+              value={relationshipDescription}
+            />
+            <label className="checkbox-field" htmlFor="relationship-directed">
+              <input
+                checked={relationshipDirected}
+                id="relationship-directed"
+                onChange={(event) => setRelationshipDirected(event.target.checked)}
+                type="checkbox"
+              />
+              <span>{ru.relationshipDirected}</span>
+            </label>
+            <button
+              className="button button-primary button-block"
+              disabled={
+                campaign.entities.length < 2 ||
+                !relationshipSourceId ||
+                !relationshipTargetId ||
+                isCreatingRelationship
+              }
+              type="submit"
+            >
+              {isCreatingRelationship ? 'Создаём…' : ru.createRelationship}
             </button>
           </form>
         </section>
