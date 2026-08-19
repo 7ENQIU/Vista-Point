@@ -7,10 +7,11 @@ import {
   type FormEvent,
 } from 'react'
 import { createAndSaveCampaign } from '../application/campaigns/createAndSaveCampaign'
+import { createAndSaveEntity } from '../application/campaigns/createAndSaveEntity'
 import { importCampaignFile } from '../application/campaigns/importCampaignFile'
 import type { CampaignBackup, CampaignRepository } from '../application/ports/CampaignRepository'
 import { parseCampaignFile } from '../domain/campaign/campaignFile'
-import type { Campaign } from '../domain/campaign/types'
+import type { Campaign, EntityType } from '../domain/campaign/types'
 import { IndexedDbCampaignRepository } from '../infrastructure/storage/IndexedDbCampaignRepository'
 import { ru } from '../shared/i18n/ru'
 import { downloadCampaign } from './downloadCampaign'
@@ -33,18 +34,31 @@ function BrandHeader({ campaignName }: { campaignName?: string }) {
   )
 }
 
+const CREATABLE_ENTITY_TYPES: EntityType[] = [
+  'location',
+  'npc',
+  'scene',
+  'clue',
+  'event',
+  'encounter',
+]
+
 interface CampaignOverviewProps {
   campaign: Campaign
   repository: CampaignRepository
   onBack: () => void
-  onRestored: (campaign: Campaign) => void
+  onCampaignChanged: (campaign: Campaign) => void
 }
 
-function CampaignOverview({ campaign, repository, onBack, onRestored }: CampaignOverviewProps) {
+function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: CampaignOverviewProps) {
   const [backups, setBackups] = useState<CampaignBackup[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [isRestoring, setIsRestoring] = useState(false)
+  const [entityType, setEntityType] = useState<EntityType>('location')
+  const [entityName, setEntityName] = useState('')
+  const [entitySummary, setEntitySummary] = useState('')
+  const [isCreatingEntity, setIsCreatingEntity] = useState(false)
   const counters = [
     [ru.entities, campaign.entities.length],
     [ru.relationships, campaign.relationships.length],
@@ -66,12 +80,34 @@ function CampaignOverview({ campaign, repository, onBack, onRestored }: Campaign
       const restored = await repository.restoreBackup(latest.id)
       const refreshedBackups = await repository.listBackups(restored.id)
       setBackups(refreshedBackups)
-      onRestored(restored)
+      onCampaignChanged(restored)
       setMessage(ru.restoreSuccess)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
     } finally {
       setIsRestoring(false)
+    }
+  }
+
+  async function handleEntitySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError('')
+    setMessage('')
+    setIsCreatingEntity(true)
+    try {
+      const result = await createAndSaveEntity(repository, campaign, {
+        type: entityType,
+        name: entityName,
+        summary: entitySummary,
+      })
+      setEntityName('')
+      setEntitySummary('')
+      onCampaignChanged(result.campaign)
+      setMessage(ru.entityCreated)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+    } finally {
+      setIsCreatingEntity(false)
     }
   }
 
@@ -118,6 +154,73 @@ function CampaignOverview({ campaign, repository, onBack, onRestored }: Campaign
             <span className="metric-date">{new Date(campaign.worldTime).toLocaleString('ru-RU')}</span>
             <p>{ru.worldTime}</p>
           </article>
+        </section>
+
+        <section className="entity-workspace" aria-labelledby="entities-heading">
+          <div className="entity-list-panel">
+            <div className="section-title entity-section-title">
+              <div>
+                <p className="overline">{ru.preparationMode}</p>
+                <h2 id="entities-heading">{ru.entities}</h2>
+              </div>
+              <span aria-label={`${campaign.entities.length} сущностей`}>
+                {campaign.entities.length}
+              </span>
+            </div>
+            {campaign.entities.length === 0 ? (
+              <p className="entity-empty">{ru.noEntities}</p>
+            ) : (
+              <div className="entity-list">
+                {[...campaign.entities].reverse().map((entity) => (
+                  <article className="entity-row" key={entity.id}>
+                    <span className="entity-type-mark" aria-hidden="true" />
+                    <div>
+                      <div className="entity-row-heading">
+                        <h3>{entity.name}</h3>
+                        <span>{ru.draft}</span>
+                      </div>
+                      <p>{entity.summary || 'Короткая заметка не добавлена.'}</p>
+                    </div>
+                    <strong>{ru.entityTypes[entity.type]}</strong>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <form className="quick-create" onSubmit={handleEntitySubmit}>
+            <p className="overline">{ru.quickCreate}</p>
+            <h2>Новая сущность</h2>
+            <label htmlFor="entity-type">{ru.entityType}</label>
+            <select
+              id="entity-type"
+              onChange={(event) => setEntityType(event.target.value as EntityType)}
+              value={entityType}
+            >
+              {CREATABLE_ENTITY_TYPES.map((type) => (
+                <option key={type} value={type}>{ru.entityTypes[type]}</option>
+              ))}
+            </select>
+            <label htmlFor="entity-name">{ru.entityName}</label>
+            <input
+              autoComplete="off"
+              id="entity-name"
+              onChange={(event) => setEntityName(event.target.value)}
+              placeholder="Например, Маяк на мысе Эйр"
+              value={entityName}
+            />
+            <label htmlFor="entity-summary">{ru.entitySummary}</label>
+            <textarea
+              id="entity-summary"
+              onChange={(event) => setEntitySummary(event.target.value)}
+              placeholder={ru.entitySummaryPlaceholder}
+              rows={3}
+              value={entitySummary}
+            />
+            <button className="button button-primary button-block" disabled={isCreatingEntity} type="submit">
+              {isCreatingEntity ? 'Создаём…' : ru.createEntity}
+            </button>
+          </form>
         </section>
         <aside className="notice">{ru.skeletonNotice}</aside>
       </main>
@@ -191,7 +294,7 @@ export default function App() {
     }
   }
 
-  function handleRestored(campaign: Campaign) {
+  function handleCampaignChanged(campaign: Campaign) {
     setCampaigns((current) => upsertCampaign(current, campaign))
     setSelected(campaign)
   }
@@ -201,7 +304,7 @@ export default function App() {
       <CampaignOverview
         campaign={selected}
         onBack={() => setSelected(undefined)}
-        onRestored={handleRestored}
+        onCampaignChanged={handleCampaignChanged}
         repository={repository}
       />
     )
