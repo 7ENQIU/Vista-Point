@@ -6,7 +6,38 @@
   text-rendering: optimizeLegibility;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  scrollbar-color: var(--color-mint-800) var(--color-ivory-200);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: var(--color-ivory-200);
+}
+
+*::-webkit-scrollbar-thumb {
+  min-width: 32px;
+  min-height: 32px;
+  border: 2px solid var(--color-ivory-200);
+  border-radius: 999px;
+  background: var(--color-mint-800);
+}
+
+*::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:active { background: var(--color-mint-500); }
+
+*::-webkit-scrollbar-corner { background: var(--color-ivory-200); }
+
+@supports selector(::-webkit-scrollbar) {
+  * { scrollbar-color: auto; }
+}
 
 body {
   margin: 0;
@@ -21,6 +52,15 @@ select,
 textarea { font: inherit; }
 
 button { cursor: pointer; }
+
+button,
+input[type="checkbox"],
+select {
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background-color 120ms ease;
+}
 
 button:focus-visible,
 input:focus-visible,
@@ -42,6 +82,9 @@ h3 {
 p { margin-top: 0; }
 
 a { color: var(--color-mint-800); }
+
+a:hover,
+a:active { color: var(--color-mint-500); }
 
 .app-window {
   width: min(1180px, calc(100% - 40px));
@@ -150,28 +193,42 @@ a { color: var(--color-mint-800); }
 }
 
 .button-primary {
-  border: 1px solid var(--color-mint-700);
+  border: 1px solid var(--color-mint-800);
   color: var(--color-ivory-logo);
-  background: var(--color-mint-700);
+  background: var(--color-mint-800);
 }
 
-.button-primary:hover:not(:disabled) { background: var(--color-mint-800); }
+.button-primary:hover:not(:disabled),
+.button-primary:active:not(:disabled) {
+  border-color: var(--color-mint-500);
+  background: var(--color-mint-500);
+}
 
 .button-secondary {
-  border: 1px solid var(--color-mint-500);
+  border: 1px solid var(--color-mint-800);
   color: var(--color-mint-800);
   background: var(--color-mint-100);
 }
 
-.button-secondary:hover:not(:disabled) { background: var(--color-mint-200); }
+.button-secondary:hover:not(:disabled),
+.button-secondary:active:not(:disabled) {
+  border-color: var(--color-mint-500);
+  color: var(--color-ivory-logo);
+  background: var(--color-mint-500);
+}
 
 .button-ghost {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-mint-800);
   color: var(--color-mint-800);
   background: transparent;
 }
 
-.button-ghost:hover:not(:disabled) { background: var(--color-mint-100); }
+.button-ghost:hover:not(:disabled),
+.button-ghost:active:not(:disabled) {
+  border-color: var(--color-mint-500);
+  color: var(--color-ivory-logo);
+  background: var(--color-mint-500);
+}
 .button-block { width: 100%; }
 
 .content-grid {
@@ -278,6 +335,91 @@ input::placeholder { color: var(--color-graphite-500); }
 textarea::placeholder { color: var(--color-graphite-500); }
 textarea { min-height: 82px; resize: vertical; }
 
+select {
+  appearance: none;
+  padding-right: 42px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%232f755f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 16px;
+  cursor: pointer;
+}
+
+select:hover:not(:disabled),
+select:active:not(:disabled) { border-color: var(--color-mint-500); }
+
+select:disabled { cursor: not-allowed; opacity: 0.5; }
+
+input[type="checkbox"] {
+  appearance: none;
+  display: grid;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  place-content: center;
+  padding: 0;
+  margin: 0;
+  border: 2px solid var(--color-mint-800);
+  border-radius: 5px;
+  background: var(--color-ivory-50);
+  cursor: pointer;
+}
+
+input[type="checkbox"]::before {
+  width: 8px;
+  height: 4px;
+  border-bottom: 2px solid var(--color-ivory-logo);
+  border-left: 2px solid var(--color-ivory-logo);
+  content: "";
+  transform: translateY(-1px) rotate(-45deg) scale(0);
+  transform-origin: center;
+  transition: transform 100ms ease;
+}
+
+input[type="checkbox"]:checked {
+  border-color: var(--color-mint-800);
+  background: var(--color-mint-800);
+}
+
+input[type="checkbox"]:checked::before {
+  transform: translateY(-1px) rotate(-45deg) scale(1);
+}
+
+input[type="checkbox"]:hover:not(:disabled),
+input[type="checkbox"]:active:not(:disabled),
+.relationship-source-option:hover input[type="checkbox"]:not(:disabled) {
+  border-color: var(--color-mint-500);
+  background-color: var(--color-mint-100);
+}
+
+input[type="checkbox"]:checked:hover:not(:disabled),
+input[type="checkbox"]:checked:active:not(:disabled),
+.relationship-source-option:hover input[type="checkbox"]:checked:not(:disabled) {
+  background-color: var(--color-mint-500);
+}
+
+input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.5; }
+
+input[type="search"] {
+  appearance: textfield;
+}
+
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  appearance: none;
+  display: none;
+}
+
+input[type="search"]::-ms-clear,
+input[type="search"]::-ms-reveal {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .create-card .button { margin-top: var(--space-4); }
 
 .privacy-note {
@@ -330,7 +472,12 @@ textarea { min-height: 82px; resize: vertical; }
 
 .link-button { font-size: 12px; }
 .link-button:hover,
-.text-button:hover { text-decoration: underline; }
+.link-button:active,
+.text-button:hover,
+.text-button:active {
+  color: var(--color-mint-500);
+  text-decoration: underline;
+}
 
 .text-button { margin: 0 0 var(--space-8) -5px; }
 
@@ -627,12 +774,13 @@ textarea { min-height: 82px; resize: vertical; }
   transform: translateY(-50%);
   border: 0;
   border-radius: 50%;
-  color: var(--color-graphite-500);
-  background: transparent;
+  color: var(--color-ivory-logo);
+  background: var(--color-mint-800);
   font-size: 18px;
 }
 
-.relationship-source-search button:hover { background: var(--color-mint-100); }
+.relationship-source-search button:hover,
+.relationship-source-search button:active { background: var(--color-mint-500); }
 
 .relationship-selected-sources {
   display: flex;
@@ -645,7 +793,7 @@ textarea { min-height: 82px; resize: vertical; }
   max-width: 100%;
   padding: 5px 9px;
   overflow: hidden;
-  border: 1px solid var(--color-mint-500);
+  border: 1px solid var(--color-mint-800);
   border-radius: 999px;
   color: var(--color-mint-800);
   background: var(--color-mint-100);
@@ -656,7 +804,12 @@ textarea { min-height: 82px; resize: vertical; }
   white-space: nowrap;
 }
 
-.relationship-selected-sources button:hover { background: var(--color-mint-200); }
+.relationship-selected-sources button:hover,
+.relationship-selected-sources button:active {
+  border-color: var(--color-mint-500);
+  color: var(--color-ivory-logo);
+  background: var(--color-mint-500);
+}
 .relationship-selected-sources span { margin-left: var(--space-1); font-size: 12px; }
 
 .relationship-source-options {
@@ -715,7 +868,6 @@ textarea { min-height: 82px; resize: vertical; }
   width: 18px;
   min-height: 18px;
   margin: 0;
-  accent-color: var(--color-mint-700);
 }
 
 .relationship-source-option > span {
@@ -775,7 +927,6 @@ textarea { min-height: 82px; resize: vertical; }
   width: 18px;
   min-height: 18px;
   margin: 0;
-  accent-color: var(--color-mint-700);
 }
 
 .campaign-graph-section {
@@ -877,7 +1028,7 @@ textarea { min-height: 82px; resize: vertical; }
 .graph-node { cursor: pointer; transition: opacity 120ms ease; }
 .graph-node rect {
   fill: var(--color-ivory-50);
-  stroke: var(--color-mint-700);
+  stroke: var(--color-mint-800);
   stroke-width: 1.5;
   stroke-dasharray: 5 4;
 }
@@ -902,7 +1053,11 @@ textarea { min-height: 82px; resize: vertical; }
   text-transform: uppercase;
 }
 .graph-node:hover rect,
-.graph-node:focus-visible rect { fill: var(--color-mint-100); stroke-width: 2.5; }
+.graph-node:focus-visible rect {
+  fill: var(--color-mint-100);
+  stroke: var(--color-mint-500);
+  stroke-width: 2.5;
+}
 .graph-node:focus { outline: none; }
 .graph-node.is-selected rect {
   fill: var(--color-mint-100);
