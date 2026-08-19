@@ -21,6 +21,7 @@ import {
 } from '../domain/campaign/types'
 import { IndexedDbCampaignRepository } from '../infrastructure/storage/IndexedDbCampaignRepository'
 import { ru } from '../shared/i18n/ru'
+import { CampaignGraph } from './CampaignGraph'
 import { downloadCampaign } from './downloadCampaign'
 
 function BrandHeader({ campaignName }: { campaignName?: string }) {
@@ -361,6 +362,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             </button>
           </form>
         </section>
+        <CampaignGraph campaign={campaign} />
         <aside className="notice">{ru.skeletonNotice}</aside>
       </main>
     </div>
