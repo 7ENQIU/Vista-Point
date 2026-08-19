@@ -34,8 +34,17 @@ describe('groupRelationshipSources', () => {
     expect(groups[1].entities.map((item) => item.name)).toEqual(['Анна', 'Серёга'])
   })
 
-  it('ищет по части имени без учёта регистра и различия е/ё', () => {
-    const groups = groupRelationshipSources(entities, 'СЕРЕ')
+  it.each([
+    'Серёга',
+    'серега',
+    'Серега',
+    'серёга',
+    'cthtuf',
+    'Cthtuf',
+    'cth`uf',
+    'Cth`uf',
+  ])('находит Серёгу по запросу «%s»', (query) => {
+    const groups = groupRelationshipSources(entities, query)
     expect(groups.flatMap((group) => group.entities).map((item) => item.id)).toEqual(['e1'])
   })
 

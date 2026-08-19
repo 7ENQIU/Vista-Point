@@ -51,7 +51,7 @@ export const ru = {
   },
   relationshipBuilder: 'Новая связь',
   relationshipSources: 'Кто или что связано',
-  relationshipSourcesHint: 'Поиск работает по названию, алиасам, заметкам и тегам.',
+  relationshipSourcesHint: 'Поиск работает по названию, алиасам, заметкам и тегам — даже при неверной раскладке клавиатуры.',
   relationshipSourcesSelected: 'Выбрано',
   relationshipSourcesFound: 'Найдено',
   relationshipSourcesSearch: 'Поиск сущностей',
