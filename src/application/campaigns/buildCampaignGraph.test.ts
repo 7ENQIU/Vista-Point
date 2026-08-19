@@ -34,8 +34,36 @@ describe('buildCampaignGraph', () => {
     const graph = buildCampaignGraph(relatedCampaign())
     const context = getFocusedGraphContext(graph, 'e1')
 
-    expect(context?.outgoing).toHaveLength(1)
-    expect(context?.incoming).toHaveLength(0)
+    expect(context?.outgoing).toHaveLength(0)
+    expect(context?.incoming).toHaveLength(1)
     expect(context?.mutual).toHaveLength(1)
+  })
+
+  it('раскладывает вложенные локации и персонажей слева направо от большего к меньшему', () => {
+    const empty = createCampaign({ name: 'Пурпе' }, new Date('2026-08-19T18:00:00Z'), 'c2')
+    const withSerega = addEntityToCampaign(empty, { type: 'npc', name: 'Серёга' }, { entityId: 'serega' })
+    const withPurpe = addEntityToCampaign(withSerega.campaign, { type: 'location', name: 'Пурпе' }, { entityId: 'purpe' })
+    const withMax = addEntityToCampaign(withPurpe.campaign, { type: 'npc', name: 'Макс' }, { entityId: 'max' })
+    const withLocation = addEntityToCampaign(withMax.campaign, { type: 'location', name: 'Локация 1' }, { entityId: 'location-1' })
+    const nestedLocation = addRelationshipToCampaign(withLocation.campaign, {
+      sourceId: 'location-1', targetId: 'purpe', type: 'located_in', directed: true,
+    })
+    const withNestedSerega = addRelationshipToCampaign(nestedLocation.campaign, {
+      sourceId: 'serega', targetId: 'location-1', type: 'located_in', directed: true,
+    })
+    const campaign = addRelationshipToCampaign(withNestedSerega.campaign, {
+      sourceId: 'max', targetId: 'location-1', type: 'located_in', directed: true,
+    }).campaign
+
+    const graph = buildCampaignGraph(campaign)
+    const nodeX = new Map(graph.nodes.map((node) => [node.entity.id, node.x]))
+    const locationChildren = graph.edges.filter((edge) => edge.source.entity.id === 'location-1')
+
+    expect(nodeX.get('purpe')).toBeLessThan(nodeX.get('location-1')!)
+    expect(nodeX.get('location-1')).toBeLessThan(nodeX.get('serega')!)
+    expect(nodeX.get('serega')).toBe(nodeX.get('max'))
+    expect(graph.edges.every((edge) => edge.source.x < edge.target.x)).toBe(true)
+    expect(graph.edges.every((edge) => edge.displayType === 'contains')).toBe(true)
+    expect(locationChildren.map((edge) => edge.target.entity.id).sort()).toEqual(['max', 'serega'])
   })
 })

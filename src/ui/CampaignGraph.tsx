@@ -38,7 +38,7 @@ function ConnectionList({
       <ul>
         {edges.map((edge) => (
           <li key={edge.relationship.id}>
-            <strong>{ru.relationshipTypes[edge.relationship.type]}</strong>
+            <strong>{ru.relationshipTypes[edge.displayType]}</strong>
             <span>{otherEntityName(edge, focusedId)}</span>
           </li>
         ))}
@@ -125,7 +125,7 @@ export function CampaignGraph({ campaign }: CampaignGraphProps) {
                       y2={edge.endY}
                     />
                     <text x={edge.labelX} y={edge.labelY} textAnchor="middle">
-                      {ru.relationshipTypes[edge.relationship.type]}
+                      {ru.relationshipTypes[edge.displayType]}
                     </text>
                   </g>
                 ))}
