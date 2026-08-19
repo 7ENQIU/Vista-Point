@@ -66,4 +66,21 @@ describe('buildCampaignGraph', () => {
     expect(graph.edges.every((edge) => edge.displayType === 'contains')).toBe(true)
     expect(locationChildren.map((edge) => edge.target.entity.id).sort()).toEqual(['max', 'serega'])
   })
+
+  it('показывает сцену левее участвующих в ней сущностей', () => {
+    const empty = createCampaign({ name: 'Сцена' }, new Date('2026-08-19T18:00:00Z'), 'c3')
+    const withNpc = addEntityToCampaign(empty, { type: 'npc', name: 'Серёга' }, { entityId: 'npc' })
+    const withScene = addEntityToCampaign(withNpc.campaign, { type: 'scene', name: 'Совет' }, { entityId: 'scene' })
+    const campaign = addRelationshipToCampaign(withScene.campaign, {
+      sourceId: 'npc', targetId: 'scene', type: 'participates_in', directed: true,
+    }).campaign
+
+    const graph = buildCampaignGraph(campaign)
+    const edge = graph.edges[0]
+
+    expect(edge.source.entity.id).toBe('scene')
+    expect(edge.target.entity.id).toBe('npc')
+    expect(edge.source.x).toBeLessThan(edge.target.x)
+    expect(edge.displayType).toBe('includes_participant')
+  })
 })

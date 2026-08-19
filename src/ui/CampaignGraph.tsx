@@ -21,6 +21,12 @@ function otherEntityName(edge: CampaignGraphEdge, focusedId: string): string {
   return edge.source.entity.id === focusedId ? edge.target.entity.name : edge.source.entity.name
 }
 
+function relationshipLabel(edge: CampaignGraphEdge): string {
+  return edge.displayType === 'includes_participant'
+    ? ru.graphRelationshipTypes.includes_participant
+    : ru.relationshipTypes[edge.displayType]
+}
+
 function ConnectionList({
   edges,
   focusedId,
@@ -38,7 +44,7 @@ function ConnectionList({
       <ul>
         {edges.map((edge) => (
           <li key={edge.relationship.id}>
-            <strong>{ru.relationshipTypes[edge.displayType]}</strong>
+            <strong>{relationshipLabel(edge)}</strong>
             <span>{otherEntityName(edge, focusedId)}</span>
           </li>
         ))}
@@ -125,7 +131,7 @@ export function CampaignGraph({ campaign }: CampaignGraphProps) {
                       y2={edge.endY}
                     />
                     <text x={edge.labelX} y={edge.labelY} textAnchor="middle">
-                      {ru.relationshipTypes[edge.displayType]}
+                      {relationshipLabel(edge)}
                     </text>
                   </g>
                 ))}

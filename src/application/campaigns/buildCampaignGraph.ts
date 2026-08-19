@@ -15,9 +15,11 @@ export interface CampaignGraphNode {
   y: number
 }
 
+export type CampaignGraphRelationshipType = RelationshipType | 'includes_participant'
+
 export interface CampaignGraphEdge {
   relationship: Relationship
-  displayType: RelationshipType
+  displayType: CampaignGraphRelationshipType
   source: CampaignGraphNode
   target: CampaignGraphNode
   startX: number
@@ -32,7 +34,7 @@ interface DisplayRelationship {
   relationship: Relationship
   displaySourceId: string
   displayTargetId: string
-  displayType: RelationshipType
+  displayType: CampaignGraphRelationshipType
 }
 
 function toDisplayRelationship(relationship: Relationship): DisplayRelationship {
@@ -42,6 +44,15 @@ function toDisplayRelationship(relationship: Relationship): DisplayRelationship 
       displaySourceId: relationship.targetId,
       displayTargetId: relationship.sourceId,
       displayType: 'contains',
+    }
+  }
+
+  if (relationship.directed && relationship.type === 'participates_in') {
+    return {
+      relationship,
+      displaySourceId: relationship.targetId,
+      displayTargetId: relationship.sourceId,
+      displayType: 'includes_participant',
     }
   }
 

@@ -50,7 +50,9 @@ export const ru = {
     encounter: 'Столкновение',
   },
   relationshipBuilder: 'Новая связь',
-  relationshipSource: 'Источник',
+  relationshipSources: 'Кто или что связано',
+  relationshipSourcesHint: 'Можно выбрать несколько сущностей.',
+  relationshipSourcesSelected: 'Выбрано',
   relationshipTarget: 'Цель',
   relationshipType: 'Тип связи',
   relationshipDescription: 'Описание связи',
@@ -87,5 +89,9 @@ export const ru = {
     opposes: 'Противостоит',
     contains: 'Содержит',
     transitions_to: 'Ведёт к',
+    participates_in: 'Участвует в',
+  },
+  graphRelationshipTypes: {
+    includes_participant: 'Включает',
   },
 } as const

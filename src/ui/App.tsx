@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { createAndSaveCampaign } from '../application/campaigns/createAndSaveCampaign'
 import { createAndSaveEntity } from '../application/campaigns/createAndSaveEntity'
-import { createAndSaveRelationship } from '../application/campaigns/createAndSaveRelationship'
+import { createAndSaveRelationships } from '../application/campaigns/createAndSaveRelationship'
 import { importCampaignFile } from '../application/campaigns/importCampaignFile'
 import type { CampaignBackup, CampaignRepository } from '../application/ports/CampaignRepository'
 import { parseCampaignFile } from '../domain/campaign/campaignFile'
@@ -58,7 +58,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [entityName, setEntityName] = useState('')
   const [entitySummary, setEntitySummary] = useState('')
   const [isCreatingEntity, setIsCreatingEntity] = useState(false)
-  const [relationshipSourceId, setRelationshipSourceId] = useState('')
+  const [relationshipSourceIds, setRelationshipSourceIds] = useState<string[]>([])
   const [relationshipTargetId, setRelationshipTargetId] = useState('')
   const [relationshipType, setRelationshipType] = useState<RelationshipType>('located_in')
   const [relationshipDescription, setRelationshipDescription] = useState('')
@@ -122,18 +122,26 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setMessage('')
     setIsCreatingRelationship(true)
     try {
-      const result = await createAndSaveRelationship(repository, campaign, {
-        sourceId: relationshipSourceId,
-        targetId: relationshipTargetId,
-        type: relationshipType,
-        directed: relationshipDirected,
-        description: relationshipDescription,
-      })
-      setRelationshipSourceId('')
+      const result = await createAndSaveRelationships(
+        repository,
+        campaign,
+        relationshipSourceIds.map((sourceId) => ({
+          sourceId,
+          targetId: relationshipTargetId,
+          type: relationshipType,
+          directed: relationshipDirected,
+          description: relationshipDescription,
+        })),
+      )
+      setRelationshipSourceIds([])
       setRelationshipTargetId('')
       setRelationshipDescription('')
       onCampaignChanged(result.campaign)
-      setMessage(ru.relationshipCreated)
+      setMessage(
+        result.relationships.length === 1
+          ? ru.relationshipCreated
+          : `Создано связей: ${result.relationships.length}. Каждая добавлена в журнал событий.`,
+      )
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
     } finally {
@@ -295,19 +303,33 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             {campaign.entities.length < 2 && (
               <p className="form-hint">{ru.relationshipNeedsEntities}</p>
             )}
-            <label htmlFor="relationship-source">{ru.relationshipSource}</label>
-            <select
-              id="relationship-source"
-              onChange={(event) => setRelationshipSourceId(event.target.value)}
-              value={relationshipSourceId}
-            >
-              <option value="">{ru.selectEntity}</option>
-              {campaign.entities.map((entity) => (
-                <option disabled={entity.id === relationshipTargetId} key={entity.id} value={entity.id}>
-                  {entity.name} · {ru.entityTypes[entity.type]}
-                </option>
-              ))}
-            </select>
+            <fieldset className="relationship-source-fieldset">
+              <legend>{ru.relationshipSources}</legend>
+              <div className="relationship-source-summary">
+                <span>{ru.relationshipSourcesHint}</span>
+                <strong>{ru.relationshipSourcesSelected}: {relationshipSourceIds.length}</strong>
+              </div>
+              <div className="relationship-source-options">
+                {campaign.entities.map((entity) => (
+                  <label className="relationship-source-option" key={entity.id}>
+                    <input
+                      checked={relationshipSourceIds.includes(entity.id)}
+                      disabled={entity.id === relationshipTargetId}
+                      onChange={(event) => {
+                        setRelationshipSourceIds((current) => event.target.checked
+                          ? [...current, entity.id]
+                          : current.filter((id) => id !== entity.id))
+                      }}
+                      type="checkbox"
+                    />
+                    <span>
+                      <strong>{entity.name}</strong>
+                      <small>{ru.entityTypes[entity.type]}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <label htmlFor="relationship-type">{ru.relationshipType}</label>
             <select
               id="relationship-type"
@@ -321,12 +343,16 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             <label htmlFor="relationship-target">{ru.relationshipTarget}</label>
             <select
               id="relationship-target"
-              onChange={(event) => setRelationshipTargetId(event.target.value)}
+              onChange={(event) => {
+                const targetId = event.target.value
+                setRelationshipTargetId(targetId)
+                setRelationshipSourceIds((current) => current.filter((id) => id !== targetId))
+              }}
               value={relationshipTargetId}
             >
               <option value="">{ru.selectEntity}</option>
               {campaign.entities.map((entity) => (
-                <option disabled={entity.id === relationshipSourceId} key={entity.id} value={entity.id}>
+                <option disabled={relationshipSourceIds.includes(entity.id)} key={entity.id} value={entity.id}>
                   {entity.name} · {ru.entityTypes[entity.type]}
                 </option>
               ))}
@@ -352,7 +378,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
               className="button button-primary button-block"
               disabled={
                 campaign.entities.length < 2 ||
-                !relationshipSourceId ||
+                relationshipSourceIds.length === 0 ||
                 !relationshipTargetId ||
                 isCreatingRelationship
               }

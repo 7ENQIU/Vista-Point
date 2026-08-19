@@ -10,12 +10,40 @@ export interface SavedRelationshipResult {
   relationship: Relationship
 }
 
+export interface SavedRelationshipsResult {
+  campaign: Campaign
+  relationships: Relationship[]
+}
+
+export async function createAndSaveRelationships(
+  repository: CampaignRepository,
+  campaign: Campaign,
+  inputs: CreateRelationshipInput[],
+): Promise<SavedRelationshipsResult> {
+  if (inputs.length === 0) {
+    throw new Error('Выберите хотя бы одну сущность для связи.')
+  }
+
+  const result = inputs.reduce(
+    (current, input) => {
+      const added = addRelationshipToCampaign(current.campaign, input)
+      return {
+        campaign: added.campaign,
+        relationships: [...current.relationships, added.relationship],
+      }
+    },
+    { campaign, relationships: [] as Relationship[] },
+  )
+
+  await repository.save(result.campaign)
+  return result
+}
+
 export async function createAndSaveRelationship(
   repository: CampaignRepository,
   campaign: Campaign,
   input: CreateRelationshipInput,
 ): Promise<SavedRelationshipResult> {
-  const result = addRelationshipToCampaign(campaign, input)
-  await repository.save(result.campaign)
-  return { campaign: result.campaign, relationship: result.relationship }
+  const result = await createAndSaveRelationships(repository, campaign, [input])
+  return { campaign: result.campaign, relationship: result.relationships[0] }
 }

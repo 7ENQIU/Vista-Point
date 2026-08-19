@@ -18,6 +18,7 @@ export const RELATIONSHIP_TYPES = [
   'opposes',
   'contains',
   'transitions_to',
+  'participates_in',
 ] as const
 export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number]
 
