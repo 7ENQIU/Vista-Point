@@ -37,6 +37,7 @@ export function archiveRelationshipInCampaign(
     occurredAt: timestamp,
     worldTime: campaign.worldTime,
     source: 'user',
+    sessionId: campaign.activeSessionId,
     relatedEntityIds: [relationship.sourceId, relationship.targetId],
     reversible: true,
     payload: {
@@ -68,6 +69,10 @@ export function archiveEntityInCampaign(
   const entity = campaign.entities.find((item) => item.id === entityId)
   if (!entity) throw new Error('Сущность не найдена в кампании.')
   if (entity.status === 'archived') throw new Error('Сущность уже удалена из рабочих представлений.')
+  const activeSession = campaign.sessions.find((session) => session.id === campaign.activeSessionId && session.status === 'active')
+  if (activeSession?.currentSceneId === entityId) {
+    throw new Error('Текущую сцену нельзя архивировать во время сессии. Сначала смените сцену или завершите сессию.')
+  }
 
   const now = options.now ?? new Date()
   const timestamp = now.toISOString()
@@ -89,6 +94,7 @@ export function archiveEntityInCampaign(
     occurredAt: timestamp,
     worldTime: campaign.worldTime,
     source: 'user',
+    sessionId: campaign.activeSessionId,
     relatedEntityIds: [entity.id],
     reversible: true,
     payload: {

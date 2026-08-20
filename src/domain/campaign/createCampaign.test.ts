@@ -9,9 +9,12 @@ describe('createCampaign', () => {
     expect(campaign).toMatchObject({
       id: 'campaign-1',
       name: 'Тени над портом',
-      schemaVersion: 1,
+      schemaVersion: 5,
       entities: [],
       relationships: [],
+      knowledge: [],
+      logicRules: [],
+      sessions: [],
       eventLog: [],
       createdAt: now.toISOString(),
     })

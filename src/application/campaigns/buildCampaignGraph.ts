@@ -9,6 +9,20 @@ export const GRAPH_WIDTH = 960
 export const GRAPH_NODE_WIDTH = 176
 export const GRAPH_NODE_HEIGHT = 80
 
+export type CampaignGraphView = 'world' | 'party'
+
+export interface CampaignGraphBuildOptions {
+  entityIds?: readonly string[]
+  view?: CampaignGraphView
+}
+
+export interface CampaignGraphNodePosition {
+  x: number
+  y: number
+}
+
+export type CampaignGraphNodePositions = Record<string, CampaignGraphNodePosition>
+
 export interface CampaignGraphNode {
   entity: CampaignEntity
   x: number
@@ -113,6 +127,33 @@ export interface FocusedGraphContext {
   mutual: CampaignGraphEdge[]
 }
 
+function buildEdges(
+  relationships: DisplayRelationship[],
+  nodes: CampaignGraphNode[],
+): CampaignGraphEdge[] {
+  const nodeById = new Map(nodes.map((node) => [node.entity.id, node]))
+  return relationships.flatMap((item): CampaignGraphEdge[] => {
+    const source = nodeById.get(item.displaySourceId)
+    const target = nodeById.get(item.displayTargetId)
+    if (!source || !target) return []
+
+    const start = edgePoint(source, target)
+    const end = edgePoint(target, source, item.relationship.directed ? 9 : 0)
+    return [{
+      relationship: item.relationship,
+      displayType: item.displayType,
+      source,
+      target,
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y,
+      labelX: (source.x + target.x) / 2,
+      labelY: (source.y + target.y) / 2 - 8,
+    }]
+  })
+}
+
 function edgePoint(
   from: CampaignGraphNode,
   to: CampaignGraphNode,
@@ -131,12 +172,27 @@ function edgePoint(
   return { x: from.x + dx * scale, y: from.y + dy * scale }
 }
 
-export function buildCampaignGraph(campaign: Campaign): CampaignGraphProjection {
-  const activeEntities = campaign.entities.filter((entity) => entity.status !== 'archived')
+export function buildCampaignGraph(
+  campaign: Campaign,
+  options: CampaignGraphBuildOptions = {},
+): CampaignGraphProjection {
+  const view = options.view ?? 'world'
+  const requestedIds = options.entityIds ? new Set(options.entityIds) : undefined
+  const partyKnownEntityIds = new Set(campaign.knowledge
+    .filter((knowledge) =>
+      knowledge.subjectType === 'party' &&
+      knowledge.status !== 'unknown' &&
+      knowledge.status !== 'forgotten')
+    .flatMap((knowledge) => knowledge.relatedEntityIds))
+  const activeEntities = campaign.entities.filter((entity) =>
+    entity.status !== 'archived' &&
+    (!requestedIds || requestedIds.has(entity.id)) &&
+    (view === 'world' || entity.visibility !== 'game_master' || partyKnownEntityIds.has(entity.id)))
   const activeEntityIds = new Set(activeEntities.map((entity) => entity.id))
   const displayRelationships = campaign.relationships
     .filter((relationship) =>
       relationship.status !== 'archived' &&
+      (view === 'world' || relationship.visibility !== 'game_master') &&
       activeEntityIds.has(relationship.sourceId) &&
       activeEntityIds.has(relationship.targetId))
     .map(toDisplayRelationship)
@@ -169,29 +225,32 @@ export function buildCampaignGraph(campaign: Campaign): CampaignGraphProjection 
       y: firstY + index * rowGap,
     }))
   })
-  const nodeById = new Map(nodes.map((node) => [node.entity.id, node]))
-  const edges = displayRelationships.flatMap((item): CampaignGraphEdge[] => {
-    const source = nodeById.get(item.displaySourceId)
-    const target = nodeById.get(item.displayTargetId)
-    if (!source || !target) return []
-
-    const start = edgePoint(source, target)
-    const end = edgePoint(target, source, item.relationship.directed ? 9 : 0)
-    return [{
-      relationship: item.relationship,
-      displayType: item.displayType,
-      source,
-      target,
-      startX: start.x,
-      startY: start.y,
-      endX: end.x,
-      endY: end.y,
-      labelX: (source.x + target.x) / 2,
-      labelY: (source.y + target.y) / 2 - 8,
-    }]
-  })
+  const edges = buildEdges(displayRelationships, nodes)
 
   return { width, height, nodes, edges }
+}
+
+export function applyCampaignGraphNodePositions(
+  graph: CampaignGraphProjection,
+  positions: CampaignGraphNodePositions,
+): CampaignGraphProjection {
+  const nodes = graph.nodes.map((node) => {
+    const position = positions[node.entity.id]
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return node
+    return {
+      ...node,
+      x: Math.min(graph.width - GRAPH_NODE_WIDTH / 2, Math.max(GRAPH_NODE_WIDTH / 2, position.x)),
+      y: Math.min(graph.height - GRAPH_NODE_HEIGHT / 2, Math.max(GRAPH_NODE_HEIGHT / 2, position.y)),
+    }
+  })
+  const relationships: DisplayRelationship[] = graph.edges.map((edge) => ({
+    relationship: edge.relationship,
+    displaySourceId: edge.source.entity.id,
+    displayTargetId: edge.target.entity.id,
+    displayType: edge.displayType,
+  }))
+
+  return { ...graph, nodes, edges: buildEdges(relationships, nodes) }
 }
 
 export function getFocusedGraphContext(

@@ -1,4 +1,4 @@
-import type { Campaign, CampaignEvent, Relationship, RelationshipType } from './types'
+import type { Campaign, CampaignEvent, Relationship, RelationshipType, Visibility } from './types'
 
 export interface CreateRelationshipInput {
   sourceId: string
@@ -6,6 +6,7 @@ export interface CreateRelationshipInput {
   type: RelationshipType
   directed: boolean
   description?: string
+  visibility?: Visibility
 }
 
 export interface AddRelationshipResult {
@@ -64,7 +65,7 @@ export function addRelationshipToCampaign(
     directed: input.directed,
     description: input.description?.trim() ?? '',
     status: 'active',
-    visibility: 'game_master',
+    visibility: input.visibility ?? 'game_master',
   }
   const event: CampaignEvent = {
     id: options.eventId ?? crypto.randomUUID(),
@@ -73,6 +74,7 @@ export function addRelationshipToCampaign(
     occurredAt: timestamp,
     worldTime: campaign.worldTime,
     source: 'user',
+    sessionId: campaign.activeSessionId,
     relatedEntityIds: [source.id, target.id],
     reversible: true,
     payload: {
@@ -81,6 +83,7 @@ export function addRelationshipToCampaign(
       sourceName: source.name,
       targetName: target.name,
       directed: relationship.directed,
+      visibility: relationship.visibility,
     },
   }
 

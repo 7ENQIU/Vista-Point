@@ -3,7 +3,12 @@ import { addEntityToCampaign } from '../../domain/campaign/addEntity'
 import { addRelationshipToCampaign } from '../../domain/campaign/addRelationship'
 import { createCampaign } from '../../domain/campaign/createCampaign'
 import { archiveEntityInCampaign, archiveRelationshipInCampaign } from '../../domain/campaign/archiveCampaignItem'
-import { buildCampaignGraph, getFocusedGraphContext, GRAPH_WIDTH } from './buildCampaignGraph'
+import {
+  applyCampaignGraphNodePositions,
+  buildCampaignGraph,
+  getFocusedGraphContext,
+  GRAPH_WIDTH,
+} from './buildCampaignGraph'
 
 function relatedCampaign() {
   const empty = createCampaign({ name: 'Граф' }, new Date('2026-08-19T18:00:00Z'), 'c1')
@@ -98,5 +103,47 @@ describe('buildCampaignGraph', () => {
     expect(graphWithoutRelationship.edges).toHaveLength(1)
     expect(graphWithoutEntity.nodes.some((node) => node.entity.id === 'e1')).toBe(false)
     expect(graphWithoutEntity.edges).toHaveLength(0)
+  })
+
+  it('строит Party preview только из разрешённых сущностей и связей', () => {
+    const campaign = relatedCampaign()
+    campaign.entities[0].visibility = 'party'
+    campaign.entities[1].visibility = 'public'
+    campaign.entities[2].visibility = 'game_master'
+    campaign.relationships[0].visibility = 'party'
+    campaign.relationships[1].visibility = 'game_master'
+    campaign.knowledge.push({
+      id: 'k1', campaignId: campaign.id, subjectType: 'party', content: 'Партия видела след.',
+      status: 'suspected', confidence: 40, truth: 'unknown', source: '',
+      relatedEntityIds: ['e3'], createdAt: campaign.createdAt, updatedAt: campaign.updatedAt,
+    })
+
+    const graph = buildCampaignGraph(campaign, { view: 'party' })
+
+    expect(graph.nodes.map((node) => node.entity.id).sort()).toEqual(['e1', 'e2', 'e3'])
+    expect(graph.edges.map((edge) => edge.relationship.id)).toEqual([campaign.relationships[0].id])
+  })
+
+  it('применяет пользовательские координаты и пересчитывает края связей', () => {
+    const graph = buildCampaignGraph(relatedCampaign())
+    const originalEdge = graph.edges[0]
+    const positioned = applyCampaignGraphNodePositions(graph, {
+      e1: { x: 500, y: 220 },
+    })
+
+    expect(positioned.nodes.find((node) => node.entity.id === 'e1')).toMatchObject({ x: 500, y: 220 })
+    expect(positioned.edges[0].endX).not.toBe(originalEdge.endX)
+    expect(graph.nodes.find((node) => node.entity.id === 'e1')).not.toMatchObject({ x: 500, y: 220 })
+  })
+
+  it('удерживает восстановленные координаты внутри области графа', () => {
+    const graph = buildCampaignGraph(relatedCampaign())
+    const positioned = applyCampaignGraphNodePositions(graph, {
+      e1: { x: -500, y: 50_000 },
+    })
+    const node = positioned.nodes.find((item) => item.entity.id === 'e1')
+
+    expect(node?.x).toBe(88)
+    expect(node?.y).toBe(graph.height - 40)
   })
 })

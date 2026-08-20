@@ -4,7 +4,7 @@ export interface CampaignBackup {
   id: string
   campaignId: string
   createdAt: string
-  reason: 'before-import' | 'before-restore'
+  reason: 'before-import' | 'before-restore' | 'before-migration'
   campaign: Campaign
 }
 

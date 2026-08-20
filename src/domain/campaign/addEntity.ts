@@ -40,6 +40,7 @@ export function addEntityToCampaign(
     visibility: 'game_master',
     tags: [],
     customFields: {},
+    state: [],
     createdAt: timestamp,
     updatedAt: timestamp,
   }
@@ -50,6 +51,7 @@ export function addEntityToCampaign(
     occurredAt: timestamp,
     worldTime: campaign.worldTime,
     source: 'user',
+    sessionId: campaign.activeSessionId,
     relatedEntityIds: [entity.id],
     reversible: true,
     payload: {

@@ -15,6 +15,7 @@ function entity(id: string, type: EntityType, name: string, aliases: string[] = 
     visibility: 'game_master',
     tags: [],
     customFields: {},
+    state: [],
     createdAt: '2026-08-20T00:00:00.000Z',
     updatedAt: '2026-08-20T00:00:00.000Z',
   }

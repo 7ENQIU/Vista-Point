@@ -3,6 +3,7 @@ import type {
   CampaignRepository,
   ImportCampaignResult,
 } from '../../application/ports/CampaignRepository'
+import { normalizeStoredCampaign } from '../../domain/campaign/campaignFile'
 import type { Campaign } from '../../domain/campaign/types'
 
 const DATABASE_NAME = 'vista-point'
@@ -46,10 +47,15 @@ function openDatabase(): Promise<IDBDatabase> {
   })
 }
 
-function createBackup(campaign: Campaign, reason: CampaignBackup['reason']): CampaignBackup {
+interface StoredCampaignBackup extends Omit<CampaignBackup, 'campaign'> {
+  campaign: unknown
+}
+
+function createBackup(campaign: unknown, reason: CampaignBackup['reason']): StoredCampaignBackup {
+  const campaignId = normalizeStoredCampaign(campaign).campaign.id
   return {
     id: crypto.randomUUID(),
-    campaignId: campaign.id,
+    campaignId,
     createdAt: new Date().toISOString(),
     reason,
     campaign: structuredClone(campaign),
@@ -60,10 +66,21 @@ export class IndexedDbCampaignRepository implements CampaignRepository {
   async list(): Promise<Campaign[]> {
     const database = await openDatabase()
     try {
-      const transaction = database.transaction(CAMPAIGNS_STORE, 'readonly')
-      const campaigns = await requestResult(
-        transaction.objectStore(CAMPAIGNS_STORE).getAll() as IDBRequest<Campaign[]>,
+      const transaction = database.transaction([CAMPAIGNS_STORE, BACKUPS_STORE], 'readwrite')
+      const completed = transactionResult(transaction)
+      const campaignStore = transaction.objectStore(CAMPAIGNS_STORE)
+      const storedCampaigns = await requestResult(
+        campaignStore.getAll() as IDBRequest<unknown[]>,
       )
+      const campaigns = storedCampaigns.map((stored) => {
+        const normalized = normalizeStoredCampaign(stored)
+        if (normalized.migrated) {
+          transaction.objectStore(BACKUPS_STORE).put(createBackup(stored, 'before-migration'))
+          campaignStore.put(normalized.campaign)
+        }
+        return normalized.campaign
+      })
+      await completed
       return campaigns.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     } finally {
       database.close()
@@ -73,10 +90,21 @@ export class IndexedDbCampaignRepository implements CampaignRepository {
   async getById(id: string): Promise<Campaign | undefined> {
     const database = await openDatabase()
     try {
-      const transaction = database.transaction(CAMPAIGNS_STORE, 'readonly')
-      return await requestResult(
-        transaction.objectStore(CAMPAIGNS_STORE).get(id) as IDBRequest<Campaign | undefined>,
-      )
+      const transaction = database.transaction([CAMPAIGNS_STORE, BACKUPS_STORE], 'readwrite')
+      const completed = transactionResult(transaction)
+      const campaigns = transaction.objectStore(CAMPAIGNS_STORE)
+      const stored = await requestResult(campaigns.get(id) as IDBRequest<unknown>)
+      if (stored === undefined) {
+        await completed
+        return undefined
+      }
+      const normalized = normalizeStoredCampaign(stored)
+      if (normalized.migrated) {
+        transaction.objectStore(BACKUPS_STORE).put(createBackup(stored, 'before-migration'))
+        campaigns.put(normalized.campaign)
+      }
+      await completed
+      return normalized.campaign
     } finally {
       database.close()
     }
@@ -100,14 +128,12 @@ export class IndexedDbCampaignRepository implements CampaignRepository {
       const transaction = database.transaction([CAMPAIGNS_STORE, BACKUPS_STORE], 'readwrite')
       const completed = transactionResult(transaction)
       const campaigns = transaction.objectStore(CAMPAIGNS_STORE)
-      const existing = await requestResult(
-        campaigns.get(campaign.id) as IDBRequest<Campaign | undefined>,
-      )
-      const backup = existing ? createBackup(existing, 'before-import') : undefined
+      const existing = await requestResult(campaigns.get(campaign.id) as IDBRequest<unknown>)
+      const backup = existing !== undefined ? createBackup(existing, 'before-import') : undefined
       if (backup) transaction.objectStore(BACKUPS_STORE).put(backup)
       campaigns.put(campaign)
       await completed
-      return { replaced: Boolean(existing), backupId: backup?.id }
+      return { replaced: existing !== undefined, backupId: backup?.id }
     } finally {
       database.close()
     }
@@ -118,9 +144,13 @@ export class IndexedDbCampaignRepository implements CampaignRepository {
     try {
       const transaction = database.transaction(BACKUPS_STORE, 'readonly')
       const index = transaction.objectStore(BACKUPS_STORE).index('campaignId')
-      const backups = await requestResult(
-        index.getAll(campaignId) as IDBRequest<CampaignBackup[]>,
+      const storedBackups = await requestResult(
+        index.getAll(campaignId) as IDBRequest<StoredCampaignBackup[]>,
       )
+      const backups = storedBackups.map((backup) => ({
+        ...backup,
+        campaign: normalizeStoredCampaign(backup.campaign).campaign,
+      }))
       return backups.sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     } finally {
       database.close()
@@ -135,7 +165,7 @@ export class IndexedDbCampaignRepository implements CampaignRepository {
       const backups = transaction.objectStore(BACKUPS_STORE)
       const campaigns = transaction.objectStore(CAMPAIGNS_STORE)
       const backup = await requestResult(
-        backups.get(backupId) as IDBRequest<CampaignBackup | undefined>,
+        backups.get(backupId) as IDBRequest<StoredCampaignBackup | undefined>,
       )
       if (!backup) {
         transaction.abort()
@@ -143,13 +173,12 @@ export class IndexedDbCampaignRepository implements CampaignRepository {
         throw new Error('Резервная копия не найдена.')
       }
 
-      const current = await requestResult(
-        campaigns.get(backup.campaignId) as IDBRequest<Campaign | undefined>,
-      )
-      if (current) backups.put(createBackup(current, 'before-restore'))
-      campaigns.put(backup.campaign)
+      const current = await requestResult(campaigns.get(backup.campaignId) as IDBRequest<unknown>)
+      if (current !== undefined) backups.put(createBackup(current, 'before-restore'))
+      const restored = normalizeStoredCampaign(backup.campaign).campaign
+      campaigns.put(restored)
       await completed
-      return structuredClone(backup.campaign)
+      return structuredClone(restored)
     } finally {
       database.close()
     }

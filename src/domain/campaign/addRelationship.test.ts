@@ -37,6 +37,19 @@ describe('addRelationshipToCampaign', () => {
     })).toThrow('должны быть разными')
   })
 
+  it('сохраняет выбранную видимость связи', () => {
+    const result = addRelationshipToCampaign(campaignWithTwoEntities(), {
+      sourceId: 'e1',
+      targetId: 'e2',
+      type: 'knows',
+      directed: true,
+      visibility: 'party',
+    })
+
+    expect(result.relationship.visibility).toBe('party')
+    expect(result.event.payload.visibility).toBe('party')
+  })
+
   it('не создаёт повторную ненаправленную связь в обратном порядке', () => {
     const first = addRelationshipToCampaign(campaignWithTwoEntities(), {
       sourceId: 'e1', targetId: 'e2', type: 'opposes', directed: false,
