@@ -1,0 +1,18 @@
+{
+  "name": "Vista Point",
+  "short_name": "Vista Point",
+  "description": "Локальная рабочая среда мастера настольной ролевой игры",
+  "lang": "ru",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f3e8",
+  "theme_color": "#68b49d",
+  "icons": [
+    {
+      "src": "/vista-point-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

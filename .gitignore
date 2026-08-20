@@ -1,0 +1,25 @@
+node_modules/
+dist/
+coverage/
+*.local
+.env
+.env.*
+!.env.example
+
+# Локальные пользовательские данные и резервные копии
+/data/
+/campaigns/
+/backups/
+/exports/
+*.vista-point.json
+*.vista-point.backup
+
+# Редакторы и ОС
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+*.log
+*.tsbuildinfo
