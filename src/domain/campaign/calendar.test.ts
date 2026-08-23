@@ -3,7 +3,7 @@ import { buildCustomCalendar, customDateToWorldTime, formatCampaignDateTime, set
 import { createCampaign } from './createCampaign'
 
 function fixture() {
-  const campaign = createCampaign({ name: 'Календарная кампания' }, new Date('2026-08-23T10:15:00.000Z'), 'campaign-1')
+  const campaign = createCampaign({ name: 'Календарная кампания' }, new Date(2026, 7, 23, 15, 15), 'campaign-1')
   const calendar = buildCustomCalendar(campaign, {
     name: 'Календарь Туманного берега', eraLabel: '3Э',
     months: [{ id: 'first', name: 'Первый прилив', days: 30 }, { id: 'last', name: 'Последнее зерно', days: 31 }],
