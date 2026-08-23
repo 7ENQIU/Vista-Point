@@ -1,6 +1,6 @@
 [package]
 name = "vista-point"
-version = "0.1.0"
+version = "0.1.1"
 description = "Локальное рабочее пространство мастера настольной ролевой игры"
 authors = ["Vista Point contributors"]
 edition = "2021"
