@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client'
 import App from './ui/App'
 import './ui/design-tokens.css'
 import './ui/styles.css'
+import { applyTheme, getInitialTheme } from './ui/theme'
+
+applyTheme(getInitialTheme())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

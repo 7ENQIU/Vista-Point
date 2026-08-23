@@ -16,6 +16,8 @@ export interface UpdateEntityInput {
   status: EditableEntityStatus
   visibility: Visibility
   tags: string[]
+  characterTags?: string[]
+  locationLevel?: number
 }
 
 export interface UpdateEntityResult {
@@ -63,6 +65,9 @@ export function updateEntityInCampaign(
 
   const name = input.name.trim()
   if (!name) throw new Error('Название сущности обязательно.')
+  if (currentEntity.type === 'location' && input.locationLevel !== undefined && (!Number.isInteger(input.locationLevel) || input.locationLevel < 1)) {
+    throw new Error('Уровень локации должен быть целым числом от 1.')
+  }
 
   const nextValues = {
     name,
@@ -72,6 +77,21 @@ export function updateEntityInCampaign(
     status: input.status,
     visibility: input.visibility,
     tags: normalizeList(input.tags),
+    characterTags: currentEntity.type === 'npc' ? normalizeList(input.characterTags ?? currentEntity.characterTags) : [],
+    locationLevel: currentEntity.type === 'location' ? input.locationLevel : undefined,
+  }
+
+  if (currentEntity.type === 'location' && nextValues.locationLevel !== undefined) {
+    const entityById = new Map(campaign.entities.map((entity) => [entity.id, entity]))
+    for (const relationship of campaign.relationships.filter((item) => item.status !== 'archived' && item.directed && (item.type === 'located_in' || item.type === 'contains'))) {
+      const childId = relationship.type === 'located_in' ? relationship.sourceId : relationship.targetId
+      const parentId = relationship.type === 'located_in' ? relationship.targetId : relationship.sourceId
+      const child = childId === currentEntity.id ? { ...currentEntity, locationLevel: nextValues.locationLevel } : entityById.get(childId)
+      const parent = parentId === currentEntity.id ? { ...currentEntity, locationLevel: nextValues.locationLevel } : entityById.get(parentId)
+      if (child?.type === 'location' && parent?.type === 'location' && child.locationLevel !== undefined && parent.locationLevel !== undefined && child.locationLevel <= parent.locationLevel) {
+        throw new Error(`Уровень вложенной локации «${child.name}» должен быть больше уровня «${parent.name}».`)
+      }
+    }
   }
   const changedFields = (Object.keys(nextValues) as Array<keyof typeof nextValues>).filter((field) => {
     const currentValue = currentEntity[field]

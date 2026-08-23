@@ -9,12 +9,17 @@ describe('createCampaign', () => {
     expect(campaign).toMatchObject({
       id: 'campaign-1',
       name: 'Тени над портом',
-      schemaVersion: 5,
+      schemaVersion: 11,
+      calendar: { kind: 'gregorian', name: 'Григорианский календарь' },
       entities: [],
       relationships: [],
       knowledge: [],
       logicRules: [],
+      logicTriggerStates: [],
+      logicActivations: [],
       sessions: [],
+      scheduledEvents: [],
+      encounters: [],
       eventLog: [],
       createdAt: now.toISOString(),
     })

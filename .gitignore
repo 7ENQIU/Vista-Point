@@ -23,3 +23,7 @@ coverage/
 Thumbs.db
 *.log
 *.tsbuildinfo
+
+# Результаты локальной сборки desktop-оболочки
+/src-tauri/target/
+/src-tauri/gen/schemas/

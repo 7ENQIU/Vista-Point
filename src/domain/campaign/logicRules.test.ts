@@ -10,6 +10,8 @@ import {
 } from './logicRules'
 import { setEntityStateInCampaign } from './setEntityState'
 import { archiveEntityInCampaign } from './archiveCampaignItem'
+import { addRelationshipToCampaign } from './addRelationship'
+import { setKnowledgeInCampaign } from './setKnowledge'
 
 function campaignWithState() {
   const created = addEntityToCampaign(createCampaign({ name: 'Правила' }), { type: 'npc', name: 'Серёга' }, {
@@ -23,8 +25,7 @@ function campaignWithState() {
 function ruleInput() {
   return {
     name: 'Серёга ранен', description: 'Показать последствия низкого здоровья.', enabled: true,
-    groupOperator: 'all' as const, executionMode: 'require_confirmation' as const,
-    conditions: [{ entityId: 'entity-1', field: 'state' as const, stateId: 'state-1', operator: 'less' as const, value: 15 }],
+    conditionGroup: { kind: 'group' as const, operator: 'all' as const, children: [{ kind: 'condition' as const, entityId: 'entity-1', field: 'state' as const, stateId: 'state-1', operator: 'less' as const, value: 15 }] }, executionMode: 'require_confirmation' as const,
     effects: [{ entityId: 'entity-1', type: 'set_lifecycle_status' as const, value: 'active' as const }],
   }
 }
@@ -36,7 +37,7 @@ describe('Logic Layer', () => {
       now: new Date('2026-08-20T10:02:00.000Z'),
     })
 
-    expect(result.rule).toMatchObject({ id: 'rule-1', groupOperator: 'all', executionMode: 'require_confirmation' })
+    expect(result.rule).toMatchObject({ id: 'rule-1', conditionGroup: { operator: 'all' }, executionMode: 'require_confirmation' })
     expect(result.campaign.entities[0].state[0].value).toBe(12)
     expect(result.event).toMatchObject({ type: 'logic.rule.created', relatedEntityIds: ['entity-1'] })
   })
@@ -53,7 +54,7 @@ describe('Logic Layer', () => {
     expect(preview.canApply).toBe(true)
     expect(created.campaign.entities[0].status).toBe('draft')
 
-    const none = { ...created.rule, groupOperator: 'none' as const }
+    const none = { ...created.rule, conditionGroup: { ...created.rule.conditionGroup, operator: 'none' as const } }
     expect(evaluateLogicRule(created.campaign, none).satisfied).toBe(false)
   })
 
@@ -79,7 +80,7 @@ describe('Logic Layer', () => {
   it('не применяет невыполненное правило и режим предложения', () => {
     const base = campaignWithState()
     const failed = setLogicRuleInCampaign(base, {
-      ...ruleInput(), conditions: [{ ...ruleInput().conditions[0], value: 5 }],
+      ...ruleInput(), conditionGroup: { ...ruleInput().conditionGroup, children: [{ ...ruleInput().conditionGroup.children[0], value: 5 }] },
     }, { ruleId: 'failed-rule' }).campaign
     expect(() => applyLogicRuleInCampaign(failed, 'failed-rule')).toThrow('Условия правила не выполнены.')
 
@@ -113,5 +114,37 @@ describe('Logic Layer', () => {
         { entityId: 'entity-1', type: 'set_lifecycle_status', value: 'draft' },
       ],
     })).toThrow('дважды изменять одно и то же поле')
+  })
+
+  it('оценивает вложенные группы и COUNT по состоянию и мировому времени', () => {
+    const base = campaignWithState()
+    const result = setLogicRuleInCampaign(base, {
+      ...ruleInput(),
+      conditionGroup: { kind: 'group', operator: 'count', minimum: 2, children: [
+        { kind: 'condition', entityId: 'entity-1', field: 'state', stateId: 'state-1', operator: 'less', value: 20 },
+        { kind: 'group', operator: 'any', children: [
+          { kind: 'condition', field: 'world_time', operator: 'less', value: '2100-01-01T00:00:00.000Z' },
+          { kind: 'condition', field: 'world_time', operator: 'greater', value: '2200-01-01T00:00:00.000Z' },
+        ] },
+        { kind: 'condition', entityId: 'entity-1', field: 'lifecycle_status', operator: 'equals', value: 'active' },
+      ] },
+    }, { ruleId: 'nested', groupIds: ['root', 'nested-group'], conditionIds: ['c1', 'c2', 'c3', 'c4'] })
+    const evaluation = evaluateLogicRule(result.campaign, result.rule)
+    expect(evaluation.satisfied).toBe(true)
+    expect(evaluation.groupResults).toEqual(expect.arrayContaining([expect.objectContaining({ groupId: 'root', matched: 2, passed: true }), expect.objectContaining({ groupId: 'nested-group', passed: true })]))
+  })
+
+  it('проверяет существование типизированной связи и статус знания партии', () => {
+    let campaign = campaignWithState()
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Маяк' }, { entityId: 'location-1' }).campaign
+    campaign = addRelationshipToCampaign(campaign, { sourceId: 'entity-1', targetId: 'location-1', type: 'located_in', directed: true }).campaign
+    campaign = setKnowledgeInCampaign(campaign, { subjectType: 'party', content: 'Серёга на маяке', status: 'known', confidence: 90, truth: 'true', relatedEntityIds: ['entity-1'] }).campaign
+    const result = setLogicRuleInCampaign(campaign, {
+      ...ruleInput(), conditionGroup: { kind: 'group', operator: 'all', children: [
+        { kind: 'condition', entityId: 'entity-1', field: 'relationship', targetEntityId: 'location-1', relationshipType: 'located_in', operator: 'exists' },
+        { kind: 'condition', entityId: 'entity-1', field: 'knowledge', subjectType: 'party', operator: 'equals', value: 'known' },
+      ] },
+    }, { ruleId: 'context-rule' })
+    expect(evaluateLogicRule(result.campaign, result.rule).satisfied).toBe(true)
   })
 })

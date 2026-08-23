@@ -7,7 +7,11 @@ import {
   applyCampaignGraphNodePositions,
   buildCampaignGraph,
   getFocusedGraphContext,
+  GRAPH_COLUMN_GAP,
   GRAPH_WIDTH,
+  GRAPH_NODE_HEIGHT,
+  GRAPH_NODE_WIDTH,
+  GRAPH_ROUTE_CLEARANCE,
 } from './buildCampaignGraph'
 
 function relatedCampaign() {
@@ -73,6 +77,41 @@ describe('buildCampaignGraph', () => {
     expect(locationChildren.map((edge) => edge.target.entity.id).sort()).toEqual(['max', 'serega'])
   })
 
+  it('ставит одинаковые уровни локаций в одну колонку с постоянным шагом и не учитывает обычные связи', () => {
+    let campaign = createCampaign({ name: 'Иерархия' }, new Date('2026-08-19T18:00:00Z'), 'levels')
+    for (const [id, type, name, locationLevel] of [
+      ['world', 'location', 'Мир', 1],
+      ['purpe', 'location', 'Пурпе', 2],
+      ['second-city', 'location', 'Второй город', 2],
+      ['station', 'location', 'Вокзал', 3],
+      ['scene', 'scene', 'Встреча', undefined],
+      ['npc', 'npc', 'Серёга', undefined],
+      ['clue', 'clue', 'Посторонняя улика', undefined],
+    ] as const) {
+      campaign = addEntityToCampaign(campaign, { type, name, locationLevel }, { entityId: id }).campaign
+    }
+    for (const [sourceId, targetId, type] of [
+      ['purpe', 'world', 'located_in'],
+      ['second-city', 'world', 'located_in'],
+      ['station', 'purpe', 'located_in'],
+      ['scene', 'station', 'located_in'],
+      ['npc', 'scene', 'participates_in'],
+      ['world', 'clue', 'knows'],
+    ] as const) {
+      campaign = addRelationshipToCampaign(campaign, { sourceId, targetId, type, directed: true }).campaign
+    }
+
+    const graph = buildCampaignGraph(campaign)
+    const x = new Map(graph.nodes.map((node) => [node.entity.id, node.x]))
+
+    expect(x.get('purpe')).toBe(x.get('second-city'))
+    expect(x.get('purpe')! - x.get('world')!).toBe(GRAPH_COLUMN_GAP)
+    expect(x.get('station')! - x.get('purpe')!).toBe(GRAPH_COLUMN_GAP)
+    expect(x.get('scene')! - x.get('station')!).toBe(GRAPH_COLUMN_GAP)
+    expect(x.get('npc')! - x.get('scene')!).toBe(GRAPH_COLUMN_GAP)
+    expect(x.get('clue')).toBe(x.get('world'))
+  })
+
   it('показывает сцену левее участвующих в ней сущностей', () => {
     const empty = createCampaign({ name: 'Сцена' }, new Date('2026-08-19T18:00:00Z'), 'c3')
     const withNpc = addEntityToCampaign(empty, { type: 'npc', name: 'Серёга' }, { entityId: 'npc' })
@@ -124,26 +163,175 @@ describe('buildCampaignGraph', () => {
     expect(graph.edges.map((edge) => edge.relationship.id)).toEqual([campaign.relationships[0].id])
   })
 
-  it('применяет пользовательские координаты и пересчитывает края связей', () => {
+  it('применяет только вертикальный порядок внутри вычисленной иерархической колонки', () => {
     const graph = buildCampaignGraph(relatedCampaign())
-    const originalEdge = graph.edges[0]
+    const automaticSecond = graph.nodes.find((node) => node.entity.id === 'e2')!
+    const automaticThird = graph.nodes.find((node) => node.entity.id === 'e3')!
     const positioned = applyCampaignGraphNodePositions(graph, {
-      e1: { x: 500, y: 220 },
+      e2: { x: 900, y: 500 },
+      e3: { x: 50, y: 20 },
     })
+    const positionedSecond = positioned.nodes.find((node) => node.entity.id === 'e2')!
+    const positionedThird = positioned.nodes.find((node) => node.entity.id === 'e3')!
 
-    expect(positioned.nodes.find((node) => node.entity.id === 'e1')).toMatchObject({ x: 500, y: 220 })
-    expect(positioned.edges[0].endX).not.toBe(originalEdge.endX)
-    expect(graph.nodes.find((node) => node.entity.id === 'e1')).not.toMatchObject({ x: 500, y: 220 })
+    expect(positionedSecond.x).toBe(automaticSecond.x)
+    expect(positionedThird.x).toBe(automaticThird.x)
+    expect(positionedThird.y).toBe(automaticSecond.y)
+    expect(positionedSecond.y).toBe(automaticThird.y)
+    expect(positionedThird.y).toBeLessThan(positionedSecond.y)
   })
 
-  it('удерживает восстановленные координаты внутри области графа', () => {
+  it('не позволяет старой ручной раскладке нарушить цепочку «локация 3 → сцена 4 → NPC 5»', () => {
+    let campaign = createCampaign({ name: 'Наследование' }, new Date('2026-08-19T18:00:00Z'), 'inherited-levels')
+    campaign = addEntityToCampaign(campaign, {
+      type: 'location', name: 'Вокзал', locationLevel: 3,
+    }, { entityId: 'location' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'scene', name: 'Приезд на поезде' }, { entityId: 'scene' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'npc', name: 'Макс' }, { entityId: 'npc' }).campaign
+    campaign = addRelationshipToCampaign(campaign, {
+      sourceId: 'scene', targetId: 'location', type: 'located_in', directed: true,
+    }).campaign
+    campaign = addRelationshipToCampaign(campaign, {
+      sourceId: 'npc', targetId: 'scene', type: 'participates_in', directed: true,
+    }).campaign
+    const automatic = buildCampaignGraph(campaign)
+    const positioned = applyCampaignGraphNodePositions(automatic, {
+      location: { x: 800, y: 90 },
+      scene: { x: 120, y: 160 },
+      npc: { x: 300, y: 230 },
+    })
+    const x = new Map(positioned.nodes.map((node) => [node.entity.id, node.x]))
+
+    expect(x.get('scene')! - x.get('location')!).toBe(GRAPH_COLUMN_GAP)
+    expect(x.get('npc')! - x.get('scene')!).toBe(GRAPH_COLUMN_GAP)
+    expect(positioned.edges.map((edge) => [edge.source.entity.id, edge.target.entity.id])).toEqual([
+      ['location', 'scene'],
+      ['scene', 'npc'],
+    ])
+  })
+
+  it('строит связи только из ортогональных сегментов и скругляет существующие повороты', () => {
     const graph = buildCampaignGraph(relatedCampaign())
+
+    for (const edge of graph.edges) {
+      expect(edge.points.slice(1).every((point, index) =>
+        point.x === edge.points[index].x || point.y === edge.points[index].y)).toBe(true)
+      if (edge.points.length > 2) expect(edge.path).toContain(' Q ')
+    }
+  })
+
+  it('ведёт связь на одной высоте прямо: справа от контейнера влево к содержимому', () => {
+    const empty = createCampaign({ name: 'Прямая' }, new Date('2026-08-19T18:00:00Z'), 'straight')
+    const withChild = addEntityToCampaign(empty, { type: 'npc', name: 'Б' }, { entityId: 'child' })
+    const withParent = addEntityToCampaign(withChild.campaign, { type: 'location', name: 'А' }, { entityId: 'parent' })
+    const campaign = addRelationshipToCampaign(withParent.campaign, {
+      sourceId: 'child', targetId: 'parent', type: 'located_in', directed: true,
+    }).campaign
+    const edge = buildCampaignGraph(campaign).edges[0]
+
+    expect(edge.source.entity.id).toBe('parent')
+    expect(edge.target.entity.id).toBe('child')
+    expect(edge.points).toHaveLength(2)
+    expect(edge.startX).toBe(edge.source.x + GRAPH_NODE_WIDTH / 2)
+    expect(edge.endX).toBe(edge.target.x - GRAPH_NODE_WIDTH / 2 - 9)
+    expect(edge.startY).toBe(edge.endY)
+    expect(edge.path).not.toContain(' Q ')
+  })
+
+  it('разводит связи одного родителя по отдельным выходам, коридорам и подписям', () => {
+    let campaign = createCampaign({ name: 'Веер' }, new Date('2026-08-19T18:00:00Z'), 'fan-out')
+    campaign = addEntityToCampaign(campaign, { type: 'scene', name: 'Приезд на поезде' }, { entityId: 'scene' }).campaign
+    for (const id of ['npc-1', 'npc-2', 'npc-3', 'npc-4']) {
+      campaign = addEntityToCampaign(campaign, { type: 'npc', name: id }, { entityId: id }).campaign
+      campaign = addRelationshipToCampaign(campaign, {
+        sourceId: id, targetId: 'scene', type: 'participates_in', directed: true,
+      }).campaign
+    }
+
+    const edges = buildCampaignGraph(campaign).edges
+    const edgeSegments = edges.map((edge) => edge.points.slice(1)
+      .map((point, index) => ({ a: edge.points[index], b: point })))
+    const sharedTrunk = edgeSegments.some((segments, edgeIndex) => segments.some((first) =>
+      edgeSegments.slice(edgeIndex + 1).some((otherSegments) => otherSegments.some((second) => {
+        const firstVertical = first.a.x === first.b.x
+        const secondVertical = second.a.x === second.b.x
+        if (firstVertical !== secondVertical) return false
+        const sameLane = firstVertical ? first.a.x === second.a.x : first.a.y === second.a.y
+        if (!sameLane) return false
+        const firstRange = firstVertical ? [first.a.y, first.b.y] : [first.a.x, first.b.x]
+        const secondRange = secondVertical ? [second.a.y, second.b.y] : [second.a.x, second.b.x]
+        return Math.min(Math.max(...firstRange), Math.max(...secondRange)) >
+          Math.max(Math.min(...firstRange), Math.min(...secondRange))
+      }))))
+
+    expect(new Set(edges.map((edge) => edge.startY)).size).toBe(edges.length)
+    expect(sharedTrunk).toBe(false)
+    expect(new Set(edges.map((edge) => edge.labelY)).size).toBe(edges.length)
+    for (const edge of edges) {
+      expect(edge.startX).toBe(edge.source.x + GRAPH_NODE_WIDTH / 2)
+      expect(edge.endX).toBe(edge.target.x - GRAPH_NODE_WIDTH / 2 - 9)
+      expect(edge.points[1].x - edge.startX).toBeGreaterThanOrEqual(GRAPH_ROUTE_CLEARANCE)
+      expect(edge.endX - edge.points.at(-2)!.x).toBeGreaterThanOrEqual(GRAPH_ROUTE_CLEARANCE)
+    }
+  })
+
+  it('не прокладывает прямую линию через защитную область посторонней карточки', () => {
+    let campaign = createCampaign({ name: 'Обход' }, new Date('2026-08-19T18:00:00Z'), 'obstacle')
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Источник', locationLevel: 1 }, { entityId: 'parent' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Цель', locationLevel: 3 }, { entityId: 'child' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Препятствие', locationLevel: 2 }, { entityId: 'obstacle' }).campaign
+    campaign = addRelationshipToCampaign(campaign, {
+      sourceId: 'parent', targetId: 'child', type: 'knows', directed: true,
+    }).campaign
+    const graph = applyCampaignGraphNodePositions(buildCampaignGraph(campaign), {
+      parent: { x: 140, y: 160 },
+      obstacle: { x: 450, y: 160 },
+      child: { x: 760, y: 160 },
+    })
+    const edge = graph.edges[0]
+    const obstacle = graph.nodes.find((node) => node.entity.id === 'obstacle')!
+    const left = obstacle.x - GRAPH_NODE_WIDTH / 2 - GRAPH_ROUTE_CLEARANCE
+    const right = obstacle.x + GRAPH_NODE_WIDTH / 2 + GRAPH_ROUTE_CLEARANCE
+    const top = obstacle.y - GRAPH_NODE_HEIGHT / 2 - GRAPH_ROUTE_CLEARANCE
+    const bottom = obstacle.y + GRAPH_NODE_HEIGHT / 2 + GRAPH_ROUTE_CLEARANCE
+    const crossesObstacle = edge.points.slice(1).some((point, index) => {
+      const previous = edge.points[index]
+      if (previous.x === point.x) {
+        return previous.x > left && previous.x < right &&
+          Math.max(previous.y, point.y) > top && Math.min(previous.y, point.y) < bottom
+      }
+      return previous.y > top && previous.y < bottom &&
+        Math.max(previous.x, point.x) > left && Math.min(previous.x, point.x) < right
+    })
+
+    expect(edge.points.length).toBeGreaterThan(2)
+    expect(crossesObstacle).toBe(false)
+  })
+
+  it('раздвигает карточки после пересекающегося ручного размещения', () => {
+    let campaign = createCampaign({ name: 'Вертикаль' }, new Date('2026-08-19T18:00:00Z'), 'vertical')
+    campaign = addEntityToCampaign(campaign, { type: 'npc', name: 'Первый' }, { entityId: 'e1' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'npc', name: 'Второй' }, { entityId: 'e2' }).campaign
+    const graph = buildCampaignGraph(campaign)
+    const positioned = applyCampaignGraphNodePositions(graph, {
+      e1: { x: 500, y: 160 },
+      e2: { x: 500, y: 160 },
+    })
+    const first = positioned.nodes.find((node) => node.entity.id === 'e1')!
+    const second = positioned.nodes.find((node) => node.entity.id === 'e2')!
+
+    expect(first.x).toBe(second.x)
+    expect(Math.abs(first.y - second.y)).toBeGreaterThanOrEqual(GRAPH_NODE_HEIGHT)
+  })
+
+  it('не позволяет восстановленным координатам вывести узел из вычисленного слота', () => {
+    const graph = buildCampaignGraph(relatedCampaign())
+    const automatic = graph.nodes.find((item) => item.entity.id === 'e1')!
     const positioned = applyCampaignGraphNodePositions(graph, {
       e1: { x: -500, y: 50_000 },
     })
     const node = positioned.nodes.find((item) => item.entity.id === 'e1')
 
-    expect(node?.x).toBe(88)
-    expect(node?.y).toBe(graph.height - 40)
+    expect(node).toMatchObject({ x: automatic.x, y: automatic.y })
   })
 })

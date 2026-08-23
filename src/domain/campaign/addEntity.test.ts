@@ -47,4 +47,13 @@ describe('addEntityToCampaign', () => {
       'Название сущности обязательно.',
     )
   })
+
+  it('сохраняет уровень локации и отдельные ролевые теги NPC', () => {
+    const campaign = createCampaign({ name: 'Иерархия' })
+    const location = addEntityToCampaign(campaign, { type: 'location', name: 'Пурпе', locationLevel: 2 }).entity
+    const npc = addEntityToCampaign(campaign, { type: 'npc', name: 'Макс', characterTags: [' бандит ', 'дворянин'] }).entity
+
+    expect(location.locationLevel).toBe(2)
+    expect(npc.characterTags).toEqual(['бандит', 'дворянин'])
+  })
 })

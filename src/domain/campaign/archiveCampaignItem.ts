@@ -73,6 +73,10 @@ export function archiveEntityInCampaign(
   if (activeSession?.currentSceneId === entityId) {
     throw new Error('Текущую сцену нельзя архивировать во время сессии. Сначала смените сцену или завершите сессию.')
   }
+  const activeEncounter = campaign.encounters.find((encounter) => encounter.id === campaign.activeEncounterId && encounter.status === 'active')
+  if (activeEncounter && (activeEncounter.encounterEntityId === entityId || activeEncounter.participants.some((participant) => participant.entityId === entityId))) {
+    throw new Error('Участника или карточку активного столкновения нельзя архивировать до его завершения.')
+  }
 
   const now = options.now ?? new Date()
   const timestamp = now.toISOString()

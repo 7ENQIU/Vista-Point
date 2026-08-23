@@ -73,4 +73,17 @@ describe('addRelationshipToCampaign', () => {
     expect(recreated.relationship.id).toBe('r2')
     expect(recreated.campaign.relationships).toHaveLength(2)
   })
+
+  it('не позволяет вложить крупную локацию в более мелкую', () => {
+    let campaign = createCampaign({ name: 'Уровни' })
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Мир', locationLevel: 1 }, { entityId: 'world' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Город', locationLevel: 2 }, { entityId: 'city' }).campaign
+
+    expect(() => addRelationshipToCampaign(campaign, {
+      sourceId: 'world', targetId: 'city', type: 'located_in', directed: true,
+    })).toThrow('должен быть больше')
+    expect(addRelationshipToCampaign(campaign, {
+      sourceId: 'city', targetId: 'world', type: 'located_in', directed: true,
+    }).relationship.type).toBe('located_in')
+  })
 })

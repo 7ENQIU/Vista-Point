@@ -34,6 +34,7 @@ describe('updateEntityInCampaign', () => {
         status: 'active',
         visibility: 'party',
         tags: [' Побережье ', 'побережье', 'Союзник'],
+        characterTags: [' Бандит ', 'бандит', 'Контрабандист'],
       },
       {
         now: new Date('2026-08-20T12:00:00.000Z'),
@@ -51,6 +52,7 @@ describe('updateEntityInCampaign', () => {
       status: 'active',
       visibility: 'party',
       tags: ['Побережье', 'Союзник'],
+      characterTags: ['Бандит', 'Контрабандист'],
       updatedAt: '2026-08-20T12:00:00.000Z',
     })
     expect(result.event).toMatchObject({

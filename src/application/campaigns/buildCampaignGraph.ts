@@ -4,10 +4,14 @@ import type {
   Relationship,
   RelationshipType,
 } from '../../domain/campaign/types'
+import { buildEntityContextPaths, selectImmediateHierarchyRelationships } from './buildEntityContext'
 
 export const GRAPH_WIDTH = 960
 export const GRAPH_NODE_WIDTH = 176
-export const GRAPH_NODE_HEIGHT = 80
+export const GRAPH_NODE_HEIGHT = 96
+export const GRAPH_COLUMN_GAP = 320
+export const GRAPH_ROW_GAP = 160
+export const GRAPH_ROUTE_CLEARANCE = 24
 
 export type CampaignGraphView = 'world' | 'party'
 
@@ -25,6 +29,7 @@ export type CampaignGraphNodePositions = Record<string, CampaignGraphNodePositio
 
 export interface CampaignGraphNode {
   entity: CampaignEntity
+  context: CampaignEntity[]
   x: number
   y: number
 }
@@ -42,6 +47,8 @@ export interface CampaignGraphEdge {
   endY: number
   labelX: number
   labelY: number
+  path: string
+  points: CampaignGraphNodePosition[]
 }
 
 interface DisplayRelationship {
@@ -78,38 +85,47 @@ function toDisplayRelationship(relationship: Relationship): DisplayRelationship 
   }
 }
 
-function buildLevels(entityIds: string[], relationships: DisplayRelationship[]): Map<string, number> {
-  const idSet = new Set(entityIds)
-  const levels = new Map(entityIds.map((id) => [id, 0]))
-  const incomingCount = new Map(entityIds.map((id) => [id, 0]))
-  const outgoing = new Map(entityIds.map((id) => [id, [] as string[]]))
+function isHierarchyRelationship(item: DisplayRelationship): boolean {
+  return item.relationship.directed &&
+    (item.displayType === 'contains' || item.displayType === 'includes_participant')
+}
+
+function buildLevels(entities: CampaignEntity[], relationships: DisplayRelationship[]): Map<string, number> {
+  const entityById = new Map(entities.map((entity) => [entity.id, entity]))
+  const parentByChild = new Map<string, string>()
+  const levels = new Map<string, number>()
 
   for (const item of relationships) {
-    if (
-      !item.relationship.directed ||
-      !idSet.has(item.displaySourceId) ||
-      !idSet.has(item.displayTargetId)
-    ) continue
-
-    outgoing.get(item.displaySourceId)?.push(item.displayTargetId)
-    incomingCount.set(
-      item.displayTargetId,
-      (incomingCount.get(item.displayTargetId) ?? 0) + 1,
-    )
-  }
-
-  const queue = entityIds.filter((id) => incomingCount.get(id) === 0)
-  for (let index = 0; index < queue.length; index += 1) {
-    const sourceId = queue[index]
-    const sourceLevel = levels.get(sourceId) ?? 0
-    for (const targetId of outgoing.get(sourceId) ?? []) {
-      levels.set(targetId, Math.max(levels.get(targetId) ?? 0, sourceLevel + 1))
-      const remaining = (incomingCount.get(targetId) ?? 1) - 1
-      incomingCount.set(targetId, remaining)
-      if (remaining === 0) queue.push(targetId)
+    if (isHierarchyRelationship(item) && entityById.has(item.displaySourceId) && entityById.has(item.displayTargetId)) {
+      parentByChild.set(item.displayTargetId, item.displaySourceId)
     }
   }
 
+  function resolveLevel(entityId: string, visiting: Set<string>): number {
+    const resolved = levels.get(entityId)
+    if (resolved !== undefined) return resolved
+
+    const entity = entityById.get(entityId)
+    if (entity?.type === 'location' && entity.locationLevel !== undefined) {
+      const explicitLevel = entity.locationLevel - 1
+      levels.set(entityId, explicitLevel)
+      return explicitLevel
+    }
+
+    if (visiting.has(entityId)) return 0
+    const parentId = parentByChild.get(entityId)
+    if (!parentId) {
+      levels.set(entityId, 0)
+      return 0
+    }
+
+    const nextVisiting = new Set(visiting).add(entityId)
+    const level = resolveLevel(parentId, nextVisiting) + 1
+    levels.set(entityId, level)
+    return level
+  }
+
+  for (const entity of entities) resolveLevel(entity.id, new Set())
   return levels
 }
 
@@ -132,44 +148,199 @@ function buildEdges(
   nodes: CampaignGraphNode[],
 ): CampaignGraphEdge[] {
   const nodeById = new Map(nodes.map((node) => [node.entity.id, node]))
+  const sourcePortOffsets = buildSourcePortOffsets(relationships, nodeById)
+  const occupiedSegments: Segment[] = []
   return relationships.flatMap((item): CampaignGraphEdge[] => {
     const source = nodeById.get(item.displaySourceId)
     const target = nodeById.get(item.displayTargetId)
     if (!source || !target) return []
 
-    const start = edgePoint(source, target)
-    const end = edgePoint(target, source, item.relationship.directed ? 9 : 0)
+    const routed = routeEdge(
+      source,
+      target,
+      nodes,
+      occupiedSegments,
+      item.relationship.directed,
+      sourcePortOffsets.get(item.relationship.id) ?? 0,
+    )
+    occupiedSegments.push(...toSegments(routed.points))
     return [{
       relationship: item.relationship,
       displayType: item.displayType,
       source,
       target,
-      startX: start.x,
-      startY: start.y,
-      endX: end.x,
-      endY: end.y,
-      labelX: (source.x + target.x) / 2,
-      labelY: (source.y + target.y) / 2 - 8,
+      startX: routed.points[0].x,
+      startY: routed.points[0].y,
+      endX: routed.points.at(-1)!.x,
+      endY: routed.points.at(-1)!.y,
+      labelX: routed.label.x,
+      labelY: routed.label.y,
+      path: roundedOrthogonalPath(routed.points),
+      points: routed.points,
     }]
   })
 }
 
-function edgePoint(
-  from: CampaignGraphNode,
-  to: CampaignGraphNode,
-  extraGap = 0,
-): { x: number; y: number } {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  if (dx === 0 && dy === 0) return { x: from.x, y: from.y }
+interface Segment { a: CampaignGraphNodePosition; b: CampaignGraphNodePosition }
 
-  const halfWidth = GRAPH_NODE_WIDTH / 2 + extraGap
-  const halfHeight = GRAPH_NODE_HEIGHT / 2 + extraGap
-  const scale = Math.min(
-    dx === 0 ? Number.POSITIVE_INFINITY : halfWidth / Math.abs(dx),
-    dy === 0 ? Number.POSITIVE_INFINITY : halfHeight / Math.abs(dy),
-  )
-  return { x: from.x + dx * scale, y: from.y + dy * scale }
+const GRAPH_EDGE_LANE_GAP = 14
+const GRAPH_PORT_INSET = 16
+
+function buildSourcePortOffsets(
+  relationships: DisplayRelationship[],
+  nodeById: Map<string, CampaignGraphNode>,
+): Map<string, number> {
+  const outgoing = new Map<string, DisplayRelationship[]>()
+  for (const item of relationships) {
+    if (!item.relationship.directed || !nodeById.has(item.displaySourceId) || !nodeById.has(item.displayTargetId)) continue
+    outgoing.set(item.displaySourceId, [...(outgoing.get(item.displaySourceId) ?? []), item])
+  }
+
+  const offsets = new Map<string, number>()
+  const maximumOffset = GRAPH_NODE_HEIGHT / 2 - GRAPH_PORT_INSET
+  const minimumOffset = 12
+
+  for (const [sourceId, items] of outgoing) {
+    const source = nodeById.get(sourceId)!
+    const above = items
+      .filter((item) => nodeById.get(item.displayTargetId)!.y < source.y)
+      .sort((first, second) => nodeById.get(first.displayTargetId)!.y - nodeById.get(second.displayTargetId)!.y)
+    const level = items.filter((item) => nodeById.get(item.displayTargetId)!.y === source.y)
+    const below = items
+      .filter((item) => nodeById.get(item.displayTargetId)!.y > source.y)
+      .sort((first, second) => nodeById.get(first.displayTargetId)!.y - nodeById.get(second.displayTargetId)!.y)
+
+    above.forEach((item, index) => {
+      const ratio = above.length === 1 ? 1 : 1 - index / (above.length - 1)
+      offsets.set(item.relationship.id, -(minimumOffset + (maximumOffset - minimumOffset) * ratio))
+    })
+    level.forEach((item, index) => {
+      const centeredIndex = index - (level.length - 1) / 2
+      offsets.set(item.relationship.id, level.length === 1 ? 0 : centeredIndex * GRAPH_EDGE_LANE_GAP)
+    })
+    below.forEach((item, index) => {
+      const ratio = below.length === 1 ? 1 : index / (below.length - 1)
+      offsets.set(item.relationship.id, minimumOffset + (maximumOffset - minimumOffset) * ratio)
+    })
+  }
+
+  return offsets
+}
+
+function toSegments(points: CampaignGraphNodePosition[]): Segment[] {
+  return points.slice(1).map((point, index) => ({ a: points[index], b: point }))
+}
+
+function compactPoints(points: CampaignGraphNodePosition[]): CampaignGraphNodePosition[] {
+  const unique = points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y)
+  return unique.filter((point, index) => {
+    if (index === 0 || index === unique.length - 1) return true
+    const previous = unique[index - 1]
+    const next = unique[index + 1]
+    return !(previous.x === point.x && point.x === next.x) && !(previous.y === point.y && point.y === next.y)
+  })
+}
+
+function segmentCrossesNode(segment: Segment, node: CampaignGraphNode): boolean {
+  const left = node.x - GRAPH_NODE_WIDTH / 2 - GRAPH_ROUTE_CLEARANCE
+  const right = node.x + GRAPH_NODE_WIDTH / 2 + GRAPH_ROUTE_CLEARANCE
+  const top = node.y - GRAPH_NODE_HEIGHT / 2 - GRAPH_ROUTE_CLEARANCE
+  const bottom = node.y + GRAPH_NODE_HEIGHT / 2 + GRAPH_ROUTE_CLEARANCE
+  if (segment.a.x === segment.b.x) {
+    return segment.a.x > left && segment.a.x < right && Math.max(segment.a.y, segment.b.y) > top && Math.min(segment.a.y, segment.b.y) < bottom
+  }
+  return segment.a.y > top && segment.a.y < bottom && Math.max(segment.a.x, segment.b.x) > left && Math.min(segment.a.x, segment.b.x) < right
+}
+
+function segmentsConflict(first: Segment, second: Segment): number {
+  const firstVertical = first.a.x === first.b.x
+  const secondVertical = second.a.x === second.b.x
+  if (firstVertical === secondVertical) {
+    const laneDistance = firstVertical
+      ? Math.abs(first.a.x - second.a.x)
+      : Math.abs(first.a.y - second.a.y)
+    if (laneDistance >= GRAPH_EDGE_LANE_GAP) return 0
+    const firstRange = firstVertical ? [first.a.y, first.b.y] : [first.a.x, first.b.x]
+    const secondRange = secondVertical ? [second.a.y, second.b.y] : [second.a.x, second.b.x]
+    return Math.min(Math.max(...firstRange), Math.max(...secondRange)) > Math.max(Math.min(...firstRange), Math.min(...secondRange)) ? 1_200 : 0
+  }
+  const vertical = firstVertical ? first : second
+  const horizontal = firstVertical ? second : first
+  return vertical.a.x > Math.min(horizontal.a.x, horizontal.b.x) && vertical.a.x < Math.max(horizontal.a.x, horizontal.b.x) &&
+    horizontal.a.y > Math.min(vertical.a.y, vertical.b.y) && horizontal.a.y < Math.max(vertical.a.y, vertical.b.y) ? 240 : 0
+}
+
+function routeEdge(source: CampaignGraphNode, target: CampaignGraphNode, nodes: CampaignGraphNode[], occupied: Segment[], directed: boolean, sourcePortOffset: number): { points: CampaignGraphNodePosition[]; label: CampaignGraphNodePosition } {
+  const direction = directed ? 1 : target.x >= source.x ? 1 : -1
+  const start = { x: source.x + direction * GRAPH_NODE_WIDTH / 2, y: source.y + sourcePortOffset }
+  const end = { x: target.x - direction * (GRAPH_NODE_WIDTH / 2 + (directed ? 9 : 0)), y: target.y }
+  const startPort = { x: start.x + direction * GRAPH_ROUTE_CLEARANCE, y: start.y }
+  const endPort = { x: end.x - direction * GRAPH_ROUTE_CLEARANCE, y: end.y }
+  const corridorMinimum = Math.min(startPort.x, endPort.x)
+  const corridorMaximum = Math.max(startPort.x, endPort.x)
+  const middleX = (startPort.x + endPort.x) / 2
+  const corridorChannels = [middleX]
+  for (let offset = GRAPH_EDGE_LANE_GAP; middleX - offset >= corridorMinimum || middleX + offset <= corridorMaximum; offset += GRAPH_EDGE_LANE_GAP) {
+    if (middleX - offset >= corridorMinimum) corridorChannels.push(middleX - offset)
+    if (middleX + offset <= corridorMaximum) corridorChannels.push(middleX + offset)
+  }
+  const xChannels = [...new Set([
+    ...corridorChannels,
+    ...nodes.flatMap((node) => [
+      node.x - GRAPH_NODE_WIDTH / 2 - GRAPH_ROUTE_CLEARANCE,
+      node.x + GRAPH_NODE_WIDTH / 2 + GRAPH_ROUTE_CLEARANCE,
+    ]),
+    GRAPH_ROUTE_CLEARANCE,
+  ])]
+  const yChannels = [...new Set([
+    (startPort.y + endPort.y) / 2,
+    ...nodes.flatMap((node) => [
+      node.y - GRAPH_NODE_HEIGHT / 2 - GRAPH_ROUTE_CLEARANCE,
+      node.y + GRAPH_NODE_HEIGHT / 2 + GRAPH_ROUTE_CLEARANCE,
+    ]),
+    GRAPH_ROUTE_CLEARANCE,
+  ])]
+  const candidates = [
+    ...xChannels.map((x) => [start, startPort, { x, y: startPort.y }, { x, y: endPort.y }, endPort, end]),
+    ...yChannels.map((y) => [start, startPort, { x: startPort.x, y }, { x: endPort.x, y }, endPort, end]),
+  ].map(compactPoints).filter((points) => points.length >= 4 || (points.length === 2 && startPort.x <= endPort.x))
+  const blockingNodes = nodes.filter((node) => node.entity.id !== source.entity.id && node.entity.id !== target.entity.id)
+  const points = candidates.map((candidate) => {
+    const segments = toSegments(candidate)
+    const blocked = segments.some((segment) => blockingNodes.some((node) => segmentCrossesNode(segment, node)))
+    const length = segments.reduce((sum, segment) => sum + Math.abs(segment.a.x - segment.b.x) + Math.abs(segment.a.y - segment.b.y), 0)
+    const conflicts = segments.reduce((sum, segment) => sum + occupied.reduce((value, existing) => value + segmentsConflict(segment, existing), 0), 0)
+    const finalSegment = segments.at(-1)!
+    const finalLength = Math.abs(finalSegment.a.x - finalSegment.b.x) + Math.abs(finalSegment.a.y - finalSegment.b.y)
+    const shortLabelLane = Math.max(0, 64 - finalLength) * 20
+    return { candidate, score: (blocked ? 1_000_000 : 0) + length + conflicts + shortLabelLane + segments.length * 18 }
+  }).sort((a, b) => a.score - b.score)[0].candidate
+  const segments = toSegments(points)
+  const finalHorizontal = [...segments].reverse().find((segment) => segment.a.y === segment.b.y) ?? segments.at(-1)!
+  return {
+    points,
+    label: {
+      x: (finalHorizontal.a.x + finalHorizontal.b.x) / 2,
+      y: (finalHorizontal.a.y + finalHorizontal.b.y) / 2 - 8,
+    },
+  }
+}
+
+function roundedOrthogonalPath(points: CampaignGraphNodePosition[], radius = 10): string {
+  if (points.length < 2) return ''
+  let path = `M ${points[0].x} ${points[0].y}`
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1]
+    const corner = points[index]
+    const next = points[index + 1]
+    const incoming = Math.min(radius, (Math.abs(corner.x - previous.x) + Math.abs(corner.y - previous.y)) / 2)
+    const outgoing = Math.min(radius, (Math.abs(next.x - corner.x) + Math.abs(next.y - corner.y)) / 2)
+    const before = { x: corner.x + Math.sign(previous.x - corner.x) * incoming, y: corner.y + Math.sign(previous.y - corner.y) * incoming }
+    const after = { x: corner.x + Math.sign(next.x - corner.x) * outgoing, y: corner.y + Math.sign(next.y - corner.y) * outgoing }
+    path += ` L ${before.x} ${before.y} Q ${corner.x} ${corner.y} ${after.x} ${after.y}`
+  }
+  const end = points.at(-1)!
+  return `${path} L ${end.x} ${end.y}`
 }
 
 export function buildCampaignGraph(
@@ -189,23 +360,20 @@ export function buildCampaignGraph(
     (!requestedIds || requestedIds.has(entity.id)) &&
     (view === 'world' || entity.visibility !== 'game_master' || partyKnownEntityIds.has(entity.id)))
   const activeEntityIds = new Set(activeEntities.map((entity) => entity.id))
-  const displayRelationships = campaign.relationships
+  const visibleRelationships = campaign.relationships
     .filter((relationship) =>
       relationship.status !== 'archived' &&
       (view === 'world' || relationship.visibility !== 'game_master') &&
       activeEntityIds.has(relationship.sourceId) &&
       activeEntityIds.has(relationship.targetId))
+  const displayRelationships = selectImmediateHierarchyRelationships(campaign, visibleRelationships)
     .map(toDisplayRelationship)
-  const levels = buildLevels(
-    activeEntities.map((entity) => entity.id),
-    displayRelationships,
-  )
+  const contextPaths = buildEntityContextPaths(campaign)
+  const levels = buildLevels(activeEntities, displayRelationships)
   const maxLevel = Math.max(0, ...levels.values())
-  const horizontalMargin = 120
-  const verticalMargin = 80
-  const columnGap = 260
-  const rowGap = 120
-  const width = Math.max(GRAPH_WIDTH, horizontalMargin * 2 + maxLevel * columnGap)
+  const horizontalMargin = 40
+  const verticalMargin = 40
+  const width = Math.max(GRAPH_WIDTH, horizontalMargin * 2 + GRAPH_NODE_WIDTH + maxLevel * GRAPH_COLUMN_GAP)
   const entitiesByLevel = new Map<number, CampaignEntity[]>()
 
   for (const entity of activeEntities) {
@@ -214,15 +382,16 @@ export function buildCampaignGraph(
   }
 
   const largestLevel = Math.max(1, ...[...entitiesByLevel.values()].map((entities) => entities.length))
-  const height = Math.max(320, verticalMargin * 2 + (largestLevel - 1) * rowGap)
+  const height = Math.max(320, verticalMargin * 2 + GRAPH_NODE_HEIGHT + (largestLevel - 1) * GRAPH_ROW_GAP)
 
   const nodes = [...entitiesByLevel.entries()].flatMap(([level, entities]) => {
-    const levelHeight = (entities.length - 1) * rowGap
+    const levelHeight = (entities.length - 1) * GRAPH_ROW_GAP
     const firstY = height / 2 - levelHeight / 2
     return entities.map((entity, index): CampaignGraphNode => ({
       entity,
-      x: horizontalMargin + level * columnGap,
-      y: firstY + index * rowGap,
+      context: contextPaths.get(entity.id) ?? [],
+      x: horizontalMargin + GRAPH_NODE_WIDTH / 2 + level * GRAPH_COLUMN_GAP,
+      y: firstY + index * GRAPH_ROW_GAP,
     }))
   })
   const edges = buildEdges(displayRelationships, nodes)
@@ -234,15 +403,31 @@ export function applyCampaignGraphNodePositions(
   graph: CampaignGraphProjection,
   positions: CampaignGraphNodePositions,
 ): CampaignGraphProjection {
-  const nodes = graph.nodes.map((node) => {
+  const nodesByColumn = new Map<number, Array<{ node: CampaignGraphNode; orderY: number; originalIndex: number }>>()
+  graph.nodes.forEach((node, originalIndex) => {
     const position = positions[node.entity.id]
-    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return node
-    return {
-      ...node,
-      x: Math.min(graph.width - GRAPH_NODE_WIDTH / 2, Math.max(GRAPH_NODE_WIDTH / 2, position.x)),
-      y: Math.min(graph.height - GRAPH_NODE_HEIGHT / 2, Math.max(GRAPH_NODE_HEIGHT / 2, position.y)),
-    }
+    const orderY = position && Number.isFinite(position.y) ? position.y : node.y
+    nodesByColumn.set(node.x, [
+      ...(nodesByColumn.get(node.x) ?? []),
+      { node, orderY, originalIndex },
+    ])
   })
+
+  const positionedById = new Map<string, CampaignGraphNode>()
+  for (const column of nodesByColumn.values()) {
+    const ordered = [...column].sort((first, second) =>
+      first.orderY - second.orderY || first.originalIndex - second.originalIndex)
+    const columnHeight = (ordered.length - 1) * GRAPH_ROW_GAP
+    const firstY = graph.height / 2 - columnHeight / 2
+    ordered.forEach(({ node }, index) => {
+      positionedById.set(node.entity.id, {
+        ...node,
+        x: node.x,
+        y: firstY + index * GRAPH_ROW_GAP,
+      })
+    })
+  }
+  const nodes = graph.nodes.map((node) => positionedById.get(node.entity.id) ?? node)
   const relationships: DisplayRelationship[] = graph.edges.map((edge) => ({
     relationship: edge.relationship,
     displaySourceId: edge.source.entity.id,

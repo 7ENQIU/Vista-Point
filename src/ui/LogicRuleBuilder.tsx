@@ -1,242 +1,100 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
-  type Campaign,
-  type CampaignEntity,
-  type LogicConditionField,
-  type LogicConditionOperator,
-  type LogicEffectType,
-  type LogicGroupOperator,
-  type LogicRule,
-  type StateValue,
+  KNOWLEDGE_STATUSES, RELATIONSHIP_TYPES, type Campaign, type CampaignEntity, type KnowledgeSubjectType,
+  type LogicCondition, type LogicConditionField, type LogicConditionGroup, type LogicConditionOperator,
+  type LogicEffectType, type LogicGroupOperator, type LogicRule, type LogicTriggerRepeat, type LogicTriggerType, type StateValue,
 } from '../domain/campaign/types'
-import { previewLogicRule, type SetLogicRuleInput } from '../domain/campaign/logicRules'
+import { previewLogicRule, type LogicConditionGroupInput, type LogicConditionInput, type SetLogicRuleInput } from '../domain/campaign/logicRules'
 import { ru } from '../shared/i18n/ru'
 
-interface LogicRuleBuilderProps {
-  campaign: Campaign
-  isSaving: boolean
-  onApply: (ruleId: string) => Promise<void>
-  onRemove: (ruleId: string) => Promise<void>
-  onSave: (input: SetLogicRuleInput) => Promise<void>
-}
-
+interface LogicRuleBuilderProps { campaign: Campaign; isSaving: boolean; onApply: (id: string) => Promise<void>; onRemove: (id: string) => Promise<void>; onSave: (input: SetLogicRuleInput) => Promise<void> }
 interface ConditionDraft {
-  key: string
-  id?: string
-  entityId: string
-  field: LogicConditionField
-  stateId: string
-  operator: LogicConditionOperator
-  value: string
+  kind: 'condition'; key: string; id?: string; entityId: string; field: LogicConditionField; stateId: string
+  targetEntityId: string; relationshipType: (typeof RELATIONSHIP_TYPES)[number]; subjectType: KnowledgeSubjectType
+  subjectEntityId: string; operator: LogicConditionOperator; value: string
 }
-
-interface EffectDraft {
-  key: string
-  id?: string
-  entityId: string
-  type: LogicEffectType
-  stateId: string
-  value: string
-}
+interface GroupDraft { kind: 'group'; key: string; id?: string; operator: LogicGroupOperator; minimum: number; children: NodeDraft[] }
+type NodeDraft = ConditionDraft | GroupDraft
+interface EffectDraft { key: string; id?: string; entityId: string; type: LogicEffectType; stateId: string; value: string }
 
 function key() { return crypto.randomUUID() }
-
 function firstEntity(entities: CampaignEntity[]) { return entities[0]?.id ?? '' }
-
-function conditionDraft(entities: CampaignEntity[]): ConditionDraft {
-  return { key: key(), entityId: firstEntity(entities), field: 'lifecycle_status', stateId: '', operator: 'equals', value: 'active' }
+function conditionDraft(entities: CampaignEntity[]): ConditionDraft { return { kind: 'condition', key: key(), entityId: firstEntity(entities), field: 'lifecycle_status', stateId: '', targetEntityId: entities[1]?.id ?? firstEntity(entities), relationshipType: 'located_in', subjectType: 'party', subjectEntityId: firstEntity(entities), operator: 'equals', value: 'active' } }
+function groupDraft(entities: CampaignEntity[], operator: LogicGroupOperator = 'all'): GroupDraft { return { kind: 'group', key: key(), operator, minimum: 1, children: [conditionDraft(entities)] } }
+function effectDraft(entities: CampaignEntity[]): EffectDraft { return { key: key(), entityId: firstEntity(entities), type: 'set_lifecycle_status', stateId: '', value: 'active' } }
+function fromCondition(condition: LogicCondition): ConditionDraft { return { kind: 'condition', key: key(), id: condition.id, entityId: condition.entityId ?? '', field: condition.field, stateId: condition.stateId ?? '', targetEntityId: condition.targetEntityId ?? '', relationshipType: condition.relationshipType ?? 'located_in', subjectType: condition.subjectType ?? 'party', subjectEntityId: condition.subjectEntityId ?? '', operator: condition.operator, value: condition.value === undefined ? '' : String(condition.value) } }
+function fromGroup(group: LogicConditionGroup): GroupDraft { return { kind: 'group', key: key(), id: group.id, operator: group.operator, minimum: group.minimum ?? 1, children: group.children.map((node) => node.kind === 'group' ? fromGroup(node) : fromCondition(node)) } }
+function updateNode(group: GroupDraft, targetKey: string, updater: (node: NodeDraft) => NodeDraft): GroupDraft {
+  return { ...group, children: group.children.map((node) => node.key === targetKey ? updater(node) : node.kind === 'group' ? updateNode(node, targetKey, updater) : node) }
 }
-
-function effectDraft(entities: CampaignEntity[]): EffectDraft {
-  return { key: key(), entityId: firstEntity(entities), type: 'set_lifecycle_status', stateId: '', value: 'active' }
+function removeNode(group: GroupDraft, targetKey: string): GroupDraft { return { ...group, children: group.children.filter((node) => node.key !== targetKey).map((node) => node.kind === 'group' ? removeNode(node, targetKey) : node) } }
+function addNode(group: GroupDraft, targetKey: string, node: NodeDraft): GroupDraft { return group.key === targetKey ? { ...group, children: [...group.children, node] } : { ...group, children: group.children.map((child) => child.kind === 'group' ? addNode(child, targetKey, node) : child) } }
+function hydrateCondition(item: ConditionDraft, entities: CampaignEntity[]): ConditionDraft {
+  const entityId = entities.some((entity) => entity.id === item.entityId) ? item.entityId : firstEntity(entities)
+  const targetEntityId = entities.some((entity) => entity.id === item.targetEntityId && entity.id !== entityId)
+    ? item.targetEntityId
+    : entities.find((entity) => entity.id !== entityId)?.id ?? entityId
+  const subjectEntityId = entities.some((entity) => entity.id === item.subjectEntityId) ? item.subjectEntityId : entityId
+  return { ...item, entityId, targetEntityId, subjectEntityId }
 }
-
-function parseStateValue(entity: CampaignEntity | undefined, stateId: string, raw: string): StateValue {
-  const state = entity?.state.find((item) => item.id === stateId)
-  if (state?.valueType === 'boolean') return raw === 'true'
-  if (state?.valueType === 'integer' || state?.valueType === 'decimal') return Number(raw)
-  return raw
+function hydrateGroup(group: GroupDraft, entities: CampaignEntity[]): GroupDraft {
+  return { ...group, children: group.children.map((node) => node.kind === 'group' ? hydrateGroup(node, entities) : hydrateCondition(node, entities)) }
 }
-
-function valueControl(
-  entity: CampaignEntity | undefined,
-  stateId: string,
-  value: string,
-  onChange: (value: string) => void,
-) {
-  const state = entity?.state.find((item) => item.id === stateId)
-  if (state?.valueType === 'boolean') return (
-    <select onChange={(event) => onChange(event.target.value)} value={value || 'true'}>
-      <option value="true">{ru.yes}</option><option value="false">{ru.no}</option>
-    </select>
-  )
-  return <input onChange={(event) => onChange(event.target.value)} step={state?.valueType === 'integer' ? 1 : 'any'} type={state && ['integer', 'decimal'].includes(state.valueType) ? 'number' : 'text'} value={value} />
-}
+function parseStateValue(entity: CampaignEntity | undefined, stateId: string, raw: string): StateValue { const state = entity?.state.find((item) => item.id === stateId); if (state?.valueType === 'boolean') return raw === 'true'; if (state?.valueType === 'integer' || state?.valueType === 'decimal') return Number(raw); return raw }
+function localDateTime(iso: string) { const date = new Date(iso); return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) }
 
 export function LogicRuleBuilder({ campaign, isSaving, onApply, onRemove, onSave }: LogicRuleBuilderProps) {
   const entities = campaign.entities.filter((entity) => entity.status !== 'archived')
-  const [editingId, setEditingId] = useState('')
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [enabled, setEnabled] = useState(true)
-  const [groupOperator, setGroupOperator] = useState<LogicGroupOperator>('all')
-  const [executionMode, setExecutionMode] = useState<'require_confirmation' | 'suggest_only'>('require_confirmation')
-  const [conditions, setConditions] = useState<ConditionDraft[]>(() => [conditionDraft(entities)])
-  const [effects, setEffects] = useState<EffectDraft[]>(() => [effectDraft(entities)])
-  const [localError, setLocalError] = useState('')
-  const [expandedRuleId, setExpandedRuleId] = useState('')
-  const [confirmingRuleId, setConfirmingRuleId] = useState('')
-  const [removingRuleId, setRemovingRuleId] = useState('')
   const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities])
+  const [editingId, setEditingId] = useState(''); const [name, setName] = useState(''); const [description, setDescription] = useState('')
+  const [enabled, setEnabled] = useState(true); const [root, setRoot] = useState<GroupDraft>(() => groupDraft(entities)); const [effects, setEffects] = useState<EffectDraft[]>(() => [effectDraft(entities)])
+  const [executionMode, setExecutionMode] = useState<'automatic' | 'require_confirmation' | 'suggest_only'>('require_confirmation')
+  const [triggerType, setTriggerType] = useState<LogicTriggerType>('manual'); const [triggerDelay, setTriggerDelay] = useState(0); const [triggerRepeat, setTriggerRepeat] = useState<LogicTriggerRepeat>('rearm')
+  const [localError, setLocalError] = useState(''); const [expandedRuleId, setExpandedRuleId] = useState(''); const [confirmingRuleId, setConfirmingRuleId] = useState(''); const [removingRuleId, setRemovingRuleId] = useState('')
 
-  function resetForm() {
-    setEditingId(''); setName(''); setDescription(''); setEnabled(true); setGroupOperator('all')
-    setExecutionMode('require_confirmation'); setConditions([conditionDraft(entities)]); setEffects([effectDraft(entities)]); setLocalError('')
-  }
-
-  function startEditing(rule: LogicRule) {
-    setEditingId(rule.id); setName(rule.name); setDescription(rule.description); setEnabled(rule.enabled)
-    setGroupOperator(rule.groupOperator); setExecutionMode(rule.executionMode)
-    setConditions(rule.conditions.map((item) => ({
-      key: key(), id: item.id, entityId: item.entityId, field: item.field, stateId: item.stateId ?? '', operator: item.operator,
-      value: item.value === undefined ? '' : String(item.value),
+  useEffect(() => {
+    if (!entities.length) return
+    setRoot((current) => hydrateGroup(current, entities))
+    setEffects((current) => current.map((effect) => ({
+      ...effect,
+      entityId: entities.some((entity) => entity.id === effect.entityId) ? effect.entityId : firstEntity(entities),
     })))
-    setEffects(rule.effects.map((item) => ({
-      key: key(), id: item.id, entityId: item.entityId, type: item.type, stateId: item.stateId ?? '', value: String(item.value),
-    })))
-    setLocalError('')
+  }, [campaign.entities])
+
+  function resetForm() { setEditingId(''); setName(''); setDescription(''); setEnabled(true); setRoot(groupDraft(entities)); setEffects([effectDraft(entities)]); setExecutionMode('require_confirmation'); setTriggerType('manual'); setTriggerDelay(0); setTriggerRepeat('rearm'); setLocalError('') }
+  function startEditing(rule: LogicRule) { setEditingId(rule.id); setName(rule.name); setDescription(rule.description); setEnabled(rule.enabled); setRoot(fromGroup(rule.conditionGroup)); setEffects(rule.effects.map((item) => ({ key: key(), id: item.id, entityId: item.entityId, type: item.type, stateId: item.stateId ?? '', value: String(item.value) }))); setExecutionMode(rule.executionMode); setTriggerType(rule.trigger.type); setTriggerDelay(rule.trigger.delayMinutes); setTriggerRepeat(rule.trigger.repeat); setLocalError('') }
+  function convertCondition(item: ConditionDraft): LogicConditionInput {
+    const common = { kind: 'condition' as const, id: item.id, field: item.field, operator: item.operator }
+    if (item.field === 'world_time') return { ...common, value: new Date(item.value).toISOString() }
+    if (item.field === 'relationship') return { ...common, entityId: item.entityId, targetEntityId: item.targetEntityId, relationshipType: item.relationshipType, operator: item.operator }
+    if (item.field === 'knowledge') return { ...common, entityId: item.entityId, subjectType: item.subjectType, subjectEntityId: item.subjectType === 'entity' ? item.subjectEntityId : undefined, value: ['exists', 'not_exists'].includes(item.operator) ? undefined : item.value }
+    if (item.field === 'lifecycle_status') return { ...common, entityId: item.entityId, value: item.value }
+    return { ...common, entityId: item.entityId, stateId: item.stateId, value: ['exists', 'not_exists'].includes(item.operator) ? undefined : parseStateValue(entityById.get(item.entityId), item.stateId, item.value) }
   }
+  function convertGroup(group: GroupDraft): LogicConditionGroupInput { return { kind: 'group', id: group.id, operator: group.operator, minimum: group.operator === 'count' ? group.minimum : undefined, children: group.children.map((node) => node.kind === 'group' ? convertGroup(node) : convertCondition(node)) } }
+  async function submit(event: FormEvent) { event.preventDefault(); setLocalError(''); try { await onSave({ ruleId: editingId || undefined, name, description, enabled, conditionGroup: convertGroup(root), executionMode, trigger: { type: triggerType, delayMinutes: triggerType === 'manual' ? 0 : triggerDelay, repeat: triggerRepeat }, effects: effects.map((item) => ({ id: item.id, entityId: item.entityId, type: item.type, stateId: item.type === 'set_state' ? item.stateId : undefined, value: item.type === 'set_state' ? parseStateValue(entityById.get(item.entityId), item.stateId, item.value) : item.value })) }); resetForm() } catch (caught) { setLocalError(caught instanceof Error ? caught.message : ru.storageError) } }
+  async function apply(id: string) { setLocalError(''); try { await onApply(id); setConfirmingRuleId('') } catch (caught) { setLocalError(caught instanceof Error ? caught.message : ru.storageError) } }
+  async function remove(id: string) { setLocalError(''); try { await onRemove(id); setRemovingRuleId(''); if (editingId === id) resetForm() } catch (caught) { setLocalError(caught instanceof Error ? caught.message : ru.storageError) } }
 
-  function updateCondition(index: number, patch: Partial<ConditionDraft>) {
-    setConditions((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
-  }
-
-  function updateEffect(index: number, patch: Partial<EffectDraft>) {
-    setEffects((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setLocalError('')
-    try {
-      await onSave({
-        ruleId: editingId || undefined, name, description, enabled, groupOperator, executionMode,
-        conditions: conditions.map((item) => ({
-          id: item.id, entityId: item.entityId, field: item.field, stateId: item.field === 'state' ? item.stateId : undefined,
-          operator: item.operator,
-          value: ['exists', 'not_exists'].includes(item.operator) ? undefined : item.field === 'state'
-            ? parseStateValue(entityById.get(item.entityId), item.stateId, item.value) : item.value,
-        })),
-        effects: effects.map((item) => ({
-          id: item.id, entityId: item.entityId, type: item.type, stateId: item.type === 'set_state' ? item.stateId : undefined,
-          value: item.type === 'set_state' ? parseStateValue(entityById.get(item.entityId), item.stateId, item.value) : item.value,
-        })),
-      })
-      resetForm()
-    } catch (caught) { setLocalError(caught instanceof Error ? caught.message : ru.storageError) }
-  }
-
-  async function apply(ruleId: string) {
-    setLocalError('')
-    try { await onApply(ruleId); setConfirmingRuleId('') } catch (caught) { setLocalError(caught instanceof Error ? caught.message : ru.storageError) }
-  }
-
-  async function remove(ruleId: string) {
-    setLocalError('')
-    try { await onRemove(ruleId); setRemovingRuleId(''); if (editingId === ruleId) resetForm() } catch (caught) { setLocalError(caught instanceof Error ? caught.message : ru.storageError) }
-  }
-
-  return (
-    <section className="logic-workspace" aria-labelledby="logic-builder-heading">
-      <div className="logic-heading">
-        <div><p className="overline">Logic Layer</p><h2 id="logic-builder-heading">{ru.logicBuilder}</h2><p>{ru.logicBuilderHint}</p></div>
-        <span>{campaign.logicRules.length}</span>
-      </div>
-      {localError && <p className="form-inline-error" role="alert">{localError}</p>}
-
-      <div className="logic-layout">
-        <div className="logic-rule-list">
-          {campaign.logicRules.length === 0 ? <p className="entity-empty">{ru.noLogicRules}</p> : campaign.logicRules.map((rule) => {
-            const preview = previewLogicRule(campaign, rule)
-            const expanded = expandedRuleId === rule.id
-            return <article className="logic-rule-card" key={rule.id}>
-              <div className="logic-rule-summary">
-                <div><h3>{rule.name}</h3><p>{rule.description || ru.logicBuilderHint}</p></div>
-                <span className={preview.evaluation.satisfied ? 'logic-pass' : 'logic-fail'}>{preview.evaluation.satisfied ? ru.conditionsMet : ru.conditionsNotMet}</span>
-              </div>
-              <div className="logic-rule-actions">
-                <button className="link-button" onClick={() => setExpandedRuleId(expanded ? '' : rule.id)} type="button">{ru.evaluateRule}</button>
-                <button className="link-button" onClick={() => startEditing(rule)} type="button">{ru.edit}</button>
-                <button className="danger-link" onClick={() => setRemovingRuleId(rule.id)} type="button">{ru.delete}</button>
-              </div>
-              {expanded && <div className="logic-preview">
-                <strong>{preview.evaluation.explanation}</strong>
-                <ul>{preview.evaluation.conditionResults.map((item) => <li className={item.passed ? 'logic-pass' : 'logic-fail'} key={item.conditionId}>{item.explanation}</li>)}</ul>
-                <h4>{ru.effectPreview}</h4><ul>{preview.effects.map((item) => <li key={item.effectId}>{item.explanation}</li>)}</ul>
-                {rule.executionMode === 'suggest_only' ? <p>{ru.suggestionOnly}</p> : confirmingRuleId === rule.id ? <div className="logic-confirm">
-                  <p>{ru.applyRuleQuestion}</p><button className="button button-primary" disabled={isSaving || !preview.canApply} onClick={() => apply(rule.id)} type="button">{ru.confirmApplyRule}</button>
-                  <button className="button button-ghost" onClick={() => setConfirmingRuleId('')} type="button">{ru.cancel}</button>
-                </div> : <button className="button button-primary" disabled={!preview.canApply || isSaving} onClick={() => setConfirmingRuleId(rule.id)} type="button">{ru.confirmApplyRule}</button>}
-              </div>}
-              {removingRuleId === rule.id && <div className="logic-confirm"><p>Удалить правило? История останется в журнале событий.</p>
-                <button className="danger-link" disabled={isSaving} onClick={() => remove(rule.id)} type="button">{ru.confirmDelete}</button>
-                <button className="link-button" onClick={() => setRemovingRuleId('')} type="button">{ru.cancel}</button></div>}
-            </article>
-          })}
-        </div>
-
-        <form className="logic-builder-form" onSubmit={handleSubmit}>
-          <h3>{editingId ? ru.editLogicRule : ru.addLogicRule}</h3>
-          <label htmlFor="logic-name">{ru.logicRuleName}</label><input id="logic-name" onChange={(event) => setName(event.target.value)} value={name} />
-          <label htmlFor="logic-description">{ru.logicRuleDescription}</label><textarea id="logic-description" onChange={(event) => setDescription(event.target.value)} rows={2} value={description} />
-          <label className="checkbox-field"><input checked={enabled} onChange={(event) => setEnabled(event.target.checked)} type="checkbox" />{ru.logicRuleEnabled}</label>
-          <label htmlFor="logic-group">{ru.logicGroupOperator}</label><select id="logic-group" onChange={(event) => setGroupOperator(event.target.value as LogicGroupOperator)} value={groupOperator}>
-            {(['all', 'any', 'none'] as const).map((item) => <option key={item} value={item}>{ru.logicGroupOperators[item]}</option>)}
-          </select>
-
-          <div className="logic-builder-section"><div><h4>{ru.logicConditions}</h4><button className="link-button" onClick={() => setConditions((current) => [...current, conditionDraft(entities)])} type="button">{ru.addCondition}</button></div>
-            {conditions.map((item, index) => {
-              const entity = entityById.get(item.entityId); const state = entity?.state.find((entry) => entry.id === item.stateId)
-              const operators = item.field === 'lifecycle_status'
-                ? ['equals', 'not_equals'] as const
-                : state?.valueType === 'text'
-                  ? ['equals', 'not_equals', 'contains', 'not_contains', 'exists', 'not_exists'] as const
-                  : state?.valueType === 'integer' || state?.valueType === 'decimal'
-                    ? ['equals', 'not_equals', 'greater', 'greater_or_equal', 'less', 'less_or_equal', 'exists', 'not_exists'] as const
-                    : ['equals', 'not_equals', 'exists', 'not_exists'] as const
-              const needsValue = !['exists', 'not_exists'].includes(item.operator)
-              return <fieldset className="logic-builder-row" key={item.key}><legend>Условие {index + 1}</legend>
-                <select aria-label={ru.logicEntity} onChange={(event) => updateCondition(index, { entityId: event.target.value, stateId: '' })} value={item.entityId}>{entities.map((entityItem) => <option key={entityItem.id} value={entityItem.id}>{entityItem.name}</option>)}</select>
-                <select aria-label={ru.logicField} onChange={(event) => updateCondition(index, { field: event.target.value as LogicConditionField, stateId: '', operator: 'equals', value: event.target.value === 'lifecycle_status' ? 'active' : '' })} value={item.field}>{(['state', 'lifecycle_status'] as const).map((field) => <option key={field} value={field}>{ru.logicFields[field]}</option>)}</select>
-                {item.field === 'state' && <select aria-label={ru.logicStateParameter} onChange={(event) => {
-                  const selected = entity?.state.find((entry) => entry.id === event.target.value)
-                  updateCondition(index, { stateId: event.target.value, operator: 'equals', value: selected ? String(selected.value) : '' })
-                }} value={item.stateId}><option value="">{ru.logicStateParameter}</option>{entity?.state.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select>}
-                <select aria-label={ru.logicOperator} onChange={(event) => updateCondition(index, { operator: event.target.value as LogicConditionOperator })} value={item.operator}>{operators.map((operator) => <option key={operator} value={operator}>{ru.logicOperators[operator]}</option>)}</select>
-                {needsValue && (item.field === 'lifecycle_status' ? <select aria-label={ru.logicExpectedValue} onChange={(event) => updateCondition(index, { value: event.target.value })} value={item.value}><option value="draft">{ru.lifecycleStatuses.draft}</option><option value="active">{ru.lifecycleStatuses.active}</option></select> : valueControl(entity, state?.id ?? '', item.value, (value) => updateCondition(index, { value })))}
-                {conditions.length > 1 && <button className="danger-link" onClick={() => setConditions((current) => current.filter((_, itemIndex) => itemIndex !== index))} type="button">{ru.removeItem}</button>}
-              </fieldset>
-            })}
-          </div>
-
-          <div className="logic-builder-section"><div><h4>{ru.logicEffects}</h4><button className="link-button" onClick={() => setEffects((current) => [...current, effectDraft(entities)])} type="button">{ru.addEffect}</button></div>
-            {effects.map((item, index) => {
-              const entity = entityById.get(item.entityId); const state = entity?.state.find((entry) => entry.id === item.stateId)
-              return <fieldset className="logic-builder-row" key={item.key}><legend>Последствие {index + 1}</legend>
-                <select aria-label={ru.logicEntity} onChange={(event) => updateEffect(index, { entityId: event.target.value, stateId: '' })} value={item.entityId}>{entities.map((entityItem) => <option key={entityItem.id} value={entityItem.id}>{entityItem.name}</option>)}</select>
-                <select aria-label={ru.logicEffectType} onChange={(event) => updateEffect(index, { type: event.target.value as LogicEffectType, stateId: '', value: 'active' })} value={item.type}>{(['set_state', 'set_lifecycle_status'] as const).map((type) => <option key={type} value={type}>{ru.logicEffectTypes[type]}</option>)}</select>
-                {item.type === 'set_state' && <select aria-label={ru.logicStateParameter} onChange={(event) => {
-                  const selected = entity?.state.find((entry) => entry.id === event.target.value)
-                  updateEffect(index, { stateId: event.target.value, value: selected ? String(selected.value) : '' })
-                }} value={item.stateId}><option value="">{ru.logicStateParameter}</option>{entity?.state.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select>}
-                {item.type === 'set_lifecycle_status' ? <select aria-label={ru.logicNewValue} onChange={(event) => updateEffect(index, { value: event.target.value })} value={item.value}><option value="draft">{ru.lifecycleStatuses.draft}</option><option value="active">{ru.lifecycleStatuses.active}</option></select> : valueControl(entity, state?.id ?? '', item.value, (value) => updateEffect(index, { value }))}
-                {effects.length > 1 && <button className="danger-link" onClick={() => setEffects((current) => current.filter((_, itemIndex) => itemIndex !== index))} type="button">{ru.removeItem}</button>}
-              </fieldset>
-            })}
-          </div>
-          <label htmlFor="logic-execution">{ru.logicExecutionMode}</label><select id="logic-execution" onChange={(event) => setExecutionMode(event.target.value as typeof executionMode)} value={executionMode}><option value="require_confirmation">{ru.logicExecutionModes.require_confirmation}</option><option value="suggest_only">{ru.logicExecutionModes.suggest_only}</option></select>
-          <div className="logic-form-actions"><button className="button button-primary" disabled={isSaving || entities.length === 0} type="submit">{isSaving ? ru.saving : ru.saveChanges}</button>{editingId && <button className="button button-ghost" onClick={resetForm} type="button">{ru.cancel}</button>}</div>
-        </form>
-      </div>
-    </section>
-  )
+  return <section className="logic-workspace" aria-labelledby="logic-builder-heading"><div className="logic-heading"><div><p className="overline">Logic Layer</p><h2 id="logic-builder-heading">{ru.logicBuilder}</h2><p>{ru.logicBuilderHint}</p></div><span>{campaign.logicRules.length}</span></div>{localError && <p className="form-inline-error" role="alert">{localError}</p>}
+    <div className="logic-layout"><div className="logic-rule-list">{campaign.logicRules.length === 0 ? <p className="entity-empty">{ru.noLogicRules}</p> : campaign.logicRules.map((rule) => { const preview = previewLogicRule(campaign, rule); const expanded = expandedRuleId === rule.id; return <article className="logic-rule-card" key={rule.id}><div className="logic-rule-summary"><div><h3>{rule.name}</h3><p>{rule.description || ru.logicBuilderHint}</p></div><span className={preview.evaluation.satisfied ? 'logic-pass' : 'logic-fail'}>{preview.evaluation.satisfied ? ru.conditionsMet : ru.conditionsNotMet}</span></div><div className="logic-rule-actions"><button className="link-button" onClick={() => setExpandedRuleId(expanded ? '' : rule.id)} type="button">{ru.evaluateRule}</button><button className="link-button" onClick={() => startEditing(rule)} type="button">{ru.edit}</button><button className="danger-link" onClick={() => setRemovingRuleId(rule.id)} type="button">{ru.delete}</button></div>{expanded && <div className="logic-preview"><strong>{preview.evaluation.explanation}</strong><ul>{preview.evaluation.groupResults.map((item) => <li className={item.passed ? 'logic-pass' : 'logic-fail'} key={item.groupId}>{item.explanation}</li>)}</ul><ul>{preview.evaluation.conditionResults.map((item) => <li className={item.passed ? 'logic-pass' : 'logic-fail'} key={item.conditionId}>{item.explanation}</li>)}</ul><h4>{ru.effectPreview}</h4><ul>{preview.effects.map((item) => <li key={item.effectId}>{item.explanation}</li>)}</ul>{rule.executionMode === 'suggest_only' ? <p>{ru.suggestionOnly}</p> : confirmingRuleId === rule.id ? <div className="logic-confirm"><p>{ru.applyRuleQuestion}</p><button className="button button-primary" disabled={isSaving || !preview.canApply} onClick={() => void apply(rule.id)} type="button">{ru.confirmApplyRule}</button><button className="button button-ghost" onClick={() => setConfirmingRuleId('')} type="button">{ru.cancel}</button></div> : <button className="button button-primary" disabled={!preview.canApply || isSaving} onClick={() => setConfirmingRuleId(rule.id)} type="button">{ru.confirmApplyRule}</button>}</div>}{removingRuleId === rule.id && <div className="logic-confirm"><p>{ru.removeLogicRuleQuestion}</p><button className="danger-link" disabled={isSaving} onClick={() => void remove(rule.id)} type="button">{ru.confirmDelete}</button><button className="link-button" onClick={() => setRemovingRuleId('')} type="button">{ru.cancel}</button></div>}</article> })}</div>
+      <form className="logic-builder-form" onSubmit={submit}><h3>{editingId ? ru.editLogicRule : ru.addLogicRule}</h3><label htmlFor="logic-name">{ru.logicRuleName}</label><input id="logic-name" value={name} onChange={(event) => setName(event.target.value)} /><label htmlFor="logic-description">{ru.logicRuleDescription}</label><textarea id="logic-description" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /><label className="checkbox-field"><input checked={enabled} onChange={(event) => setEnabled(event.target.checked)} type="checkbox" />{ru.logicRuleEnabled}</label>
+        <div className="logic-builder-section"><h4>{ru.logicConditions}</h4><GroupEditor campaign={campaign} entities={entities} group={root} root onAddCondition={(groupKey) => setRoot((current) => addNode(current, groupKey, conditionDraft(entities)))} onAddGroup={(groupKey) => setRoot((current) => addNode(current, groupKey, groupDraft(entities, 'all')))} onRemove={(nodeKey) => setRoot((current) => removeNode(current, nodeKey))} onUpdate={(nodeKey, updater) => setRoot((current) => current.key === nodeKey ? updater(current) as GroupDraft : updateNode(current, nodeKey, updater))} /></div>
+        <div className="logic-builder-section"><div><h4>{ru.logicEffects}</h4><button className="link-button" onClick={() => setEffects((current) => [...current, effectDraft(entities)])} type="button">{ru.addEffect}</button></div>{effects.map((item, index) => <EffectEditor effect={item} entities={entities} key={item.key} onChange={(patch) => setEffects((current) => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, ...patch } : entry))} onRemove={effects.length > 1 ? () => setEffects((current) => current.filter((_, itemIndex) => itemIndex !== index)) : undefined} />)}</div>
+        <div className="logic-builder-section"><h4>{ru.logicTrigger}</h4><label htmlFor="logic-trigger-type">{ru.logicTriggerType}</label><select id="logic-trigger-type" value={triggerType} onChange={(event) => { const value = event.target.value as LogicTriggerType; setTriggerType(value); if (value === 'manual' && executionMode === 'automatic') setExecutionMode('require_confirmation') }}><option value="manual">{ru.logicTriggerTypes.manual}</option><option value="on_change">{ru.logicTriggerTypes.on_change}</option><option value="world_time">{ru.logicTriggerTypes.world_time}</option></select>{triggerType !== 'manual' && <><label htmlFor="logic-trigger-delay">{ru.logicTriggerDelay}</label><input id="logic-trigger-delay" min="0" onChange={(event) => setTriggerDelay(Number(event.target.value))} step="1" type="number" value={triggerDelay} /><label htmlFor="logic-trigger-repeat">{ru.logicTriggerRepeat}</label><select id="logic-trigger-repeat" value={triggerRepeat} onChange={(event) => setTriggerRepeat(event.target.value as LogicTriggerRepeat)}><option value="rearm">{ru.logicTriggerRepeats.rearm}</option><option value="once">{ru.logicTriggerRepeats.once}</option></select></>}</div>
+        <label htmlFor="logic-execution">{ru.logicExecutionMode}</label><select id="logic-execution" value={executionMode} onChange={(event) => setExecutionMode(event.target.value as typeof executionMode)}>{triggerType !== 'manual' && <option value="automatic">{ru.logicExecutionModes.automatic}</option>}<option value="require_confirmation">{ru.logicExecutionModes.require_confirmation}</option><option value="suggest_only">{ru.logicExecutionModes.suggest_only}</option></select>{executionMode === 'automatic' && <p className="form-hint">{ru.logicAutomaticWarning}</p>}<div className="logic-form-actions"><button className="button button-primary" disabled={isSaving || !entities.length} type="submit">{isSaving ? ru.saving : ru.saveChanges}</button>{editingId && <button className="button button-ghost" onClick={resetForm} type="button">{ru.cancel}</button>}</div></form></div></section>
 }
+
+function GroupEditor({ campaign, entities, group, root, onAddCondition, onAddGroup, onRemove, onUpdate }: { campaign: Campaign; entities: CampaignEntity[]; group: GroupDraft; root?: boolean; onAddCondition: (key: string) => void; onAddGroup: (key: string) => void; onRemove: (key: string) => void; onUpdate: (key: string, updater: (node: NodeDraft) => NodeDraft) => void }) {
+  return <fieldset className={root ? 'logic-condition-group logic-condition-root' : 'logic-condition-group'}><legend>{root ? ru.rootConditionGroup : ru.nestedConditionGroup}</legend><div className="logic-group-toolbar"><label>{ru.logicGroupOperator}<select value={group.operator} onChange={(event) => onUpdate(group.key, (node) => ({ ...(node as GroupDraft), operator: event.target.value as LogicGroupOperator }))}>{(['all', 'any', 'none', 'count'] as const).map((operator) => <option key={operator} value={operator}>{ru.logicGroupOperators[operator]}</option>)}</select></label>{group.operator === 'count' && <label>{ru.logicCountMinimum}<input type="number" min="1" max={group.children.length} value={group.minimum} onChange={(event) => onUpdate(group.key, (node) => ({ ...(node as GroupDraft), minimum: Number(event.target.value) }))} /></label>}<button className="link-button" onClick={() => onAddCondition(group.key)} type="button">{ru.addCondition}</button><button className="link-button" onClick={() => onAddGroup(group.key)} type="button">{ru.addConditionGroup}</button>{!root && <button className="danger-link" onClick={() => onRemove(group.key)} type="button">{ru.removeGroup}</button>}</div>{group.children.map((node, index) => node.kind === 'group' ? <GroupEditor campaign={campaign} entities={entities} group={node} key={node.key} onAddCondition={onAddCondition} onAddGroup={onAddGroup} onRemove={onRemove} onUpdate={onUpdate} /> : <ConditionEditor campaign={campaign} condition={node} entities={entities} index={index} key={node.key} onChange={(patch) => onUpdate(node.key, (current) => ({ ...(current as ConditionDraft), ...patch }))} onRemove={group.children.length > 1 ? () => onRemove(node.key) : undefined} />)}</fieldset>
+}
+
+function ConditionEditor({ campaign, condition, entities, index, onChange, onRemove }: { campaign: Campaign; condition: ConditionDraft; entities: CampaignEntity[]; index: number; onChange: (patch: Partial<ConditionDraft>) => void; onRemove?: () => void }) {
+  const entity = entities.find((item) => item.id === condition.entityId); const state = entity?.state.find((item) => item.id === condition.stateId)
+  const operators: LogicConditionOperator[] = condition.field === 'relationship' ? ['exists', 'not_exists'] : condition.field === 'knowledge' ? ['exists', 'not_exists', 'equals', 'not_equals'] : condition.field === 'world_time' ? ['equals', 'not_equals', 'greater', 'greater_or_equal', 'less', 'less_or_equal'] : condition.field === 'lifecycle_status' ? ['equals', 'not_equals'] : state?.valueType === 'text' ? ['equals', 'not_equals', 'contains', 'not_contains', 'exists', 'not_exists'] : state?.valueType === 'integer' || state?.valueType === 'decimal' ? ['equals', 'not_equals', 'greater', 'greater_or_equal', 'less', 'less_or_equal', 'exists', 'not_exists'] : ['equals', 'not_equals', 'exists', 'not_exists']
+  function changeField(field: LogicConditionField) { onChange({ field, operator: field === 'relationship' ? 'exists' : field === 'knowledge' ? 'exists' : 'equals', value: field === 'world_time' ? localDateTime(campaign.worldTime) : field === 'lifecycle_status' ? 'active' : '', stateId: '' }) }
+  return <fieldset className="logic-builder-row"><legend>{ru.conditionLabel} {index + 1}</legend><select aria-label={ru.logicField} value={condition.field} onChange={(event) => changeField(event.target.value as LogicConditionField)}>{(['state', 'lifecycle_status', 'relationship', 'knowledge', 'world_time'] as const).map((field) => <option key={field} value={field}>{ru.logicFields[field]}</option>)}</select>{condition.field !== 'world_time' && <select aria-label={ru.logicEntity} value={condition.entityId} onChange={(event) => onChange({ entityId: event.target.value, stateId: '' })}>{entities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}{condition.field === 'state' && <select aria-label={ru.logicStateParameter} value={condition.stateId} onChange={(event) => { const selected = entity?.state.find((item) => item.id === event.target.value); onChange({ stateId: event.target.value, value: selected ? String(selected.value) : '', operator: 'equals' }) }}><option value="">{ru.logicStateParameter}</option>{entity?.state.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}{condition.field === 'relationship' && <><select aria-label={ru.relationshipType} value={condition.relationshipType} onChange={(event) => onChange({ relationshipType: event.target.value as ConditionDraft['relationshipType'] })}>{RELATIONSHIP_TYPES.map((type) => <option key={type} value={type}>{ru.relationshipTypes[type]}</option>)}</select><select aria-label={ru.relationshipTarget} value={condition.targetEntityId} onChange={(event) => onChange({ targetEntityId: event.target.value })}>{entities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></>}{condition.field === 'knowledge' && <><select aria-label={ru.knowledgeSubject} value={condition.subjectType} onChange={(event) => onChange({ subjectType: event.target.value as KnowledgeSubjectType })}><option value="party">{ru.party}</option><option value="entity">{ru.selectEntity}</option></select>{condition.subjectType === 'entity' && <select aria-label={ru.knowledgeSubjectEntity} value={condition.subjectEntityId} onChange={(event) => onChange({ subjectEntityId: event.target.value })}>{entities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}</>}<select aria-label={ru.logicOperator} value={condition.operator} onChange={(event) => onChange({ operator: event.target.value as LogicConditionOperator })}>{operators.map((operator) => <option key={operator} value={operator}>{ru.logicOperators[operator]}</option>)}</select>{!['exists', 'not_exists'].includes(condition.operator) && (condition.field === 'world_time' ? <input aria-label={ru.logicExpectedTime} type="datetime-local" value={condition.value} onChange={(event) => onChange({ value: event.target.value })} /> : condition.field === 'knowledge' ? <select aria-label={ru.logicExpectedValue} value={condition.value || 'known'} onChange={(event) => onChange({ value: event.target.value })}>{KNOWLEDGE_STATUSES.map((status) => <option key={status} value={status}>{ru.knowledgeStatuses[status]}</option>)}</select> : condition.field === 'lifecycle_status' ? <select aria-label={ru.logicExpectedValue} value={condition.value} onChange={(event) => onChange({ value: event.target.value })}><option value="draft">{ru.lifecycleStatuses.draft}</option><option value="active">{ru.lifecycleStatuses.active}</option></select> : <ValueControl entity={entity} stateId={condition.stateId} value={condition.value} onChange={(value) => onChange({ value })} />)}{onRemove && <button className="danger-link" onClick={onRemove} type="button">{ru.removeItem}</button>}</fieldset>
+}
+
+function ValueControl({ entity, stateId, value, onChange }: { entity?: CampaignEntity; stateId: string; value: string; onChange: (value: string) => void }) { const state = entity?.state.find((item) => item.id === stateId); if (state?.valueType === 'boolean') return <select value={value || 'true'} onChange={(event) => onChange(event.target.value)}><option value="true">{ru.yes}</option><option value="false">{ru.no}</option></select>; return <input type={state && ['integer', 'decimal'].includes(state.valueType) ? 'number' : 'text'} step={state?.valueType === 'integer' ? 1 : 'any'} value={value} onChange={(event) => onChange(event.target.value)} /> }
+function EffectEditor({ effect, entities, onChange, onRemove }: { effect: EffectDraft; entities: CampaignEntity[]; onChange: (patch: Partial<EffectDraft>) => void; onRemove?: () => void }) { const entity = entities.find((item) => item.id === effect.entityId); return <fieldset className="logic-builder-row"><legend>{ru.logicEffectType}</legend><select aria-label={ru.logicEntity} value={effect.entityId} onChange={(event) => onChange({ entityId: event.target.value, stateId: '' })}>{entities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select aria-label={ru.logicEffectType} value={effect.type} onChange={(event) => onChange({ type: event.target.value as LogicEffectType, stateId: '', value: 'active' })}><option value="set_state">{ru.logicEffectTypes.set_state}</option><option value="set_lifecycle_status">{ru.logicEffectTypes.set_lifecycle_status}</option></select>{effect.type === 'set_state' && <select aria-label={ru.logicStateParameter} value={effect.stateId} onChange={(event) => { const state = entity?.state.find((item) => item.id === event.target.value); onChange({ stateId: event.target.value, value: state ? String(state.value) : '' }) }}><option value="">{ru.logicStateParameter}</option>{entity?.state.map((state) => <option key={state.id} value={state.id}>{state.name}</option>)}</select>}{effect.type === 'set_lifecycle_status' ? <select aria-label={ru.logicNewValue} value={effect.value} onChange={(event) => onChange({ value: event.target.value })}><option value="draft">{ru.lifecycleStatuses.draft}</option><option value="active">{ru.lifecycleStatuses.active}</option></select> : <ValueControl entity={entity} stateId={effect.stateId} value={effect.value} onChange={(value) => onChange({ value })} />}{onRemove && <button className="danger-link" onClick={onRemove} type="button">{ru.removeItem}</button>}</fieldset> }

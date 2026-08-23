@@ -122,6 +122,7 @@ export function completeSessionInCampaign(
   options: Pick<SessionOptions, 'now' | 'eventId'> = {},
 ): { campaign: Campaign; session: CampaignSession; event: CampaignEvent } {
   const current = getActiveSession(campaign)
+  if (campaign.activeEncounterId) throw new Error('Сначала завершите активное столкновение.')
   const timestamp = (options.now ?? new Date()).toISOString()
   const session: CampaignSession = {
     ...current, status: 'completed', endedAt: timestamp, worldTimeEnd: campaign.worldTime, summary: summary.trim(),

@@ -27,6 +27,8 @@ export function EntityEditor({ entity, isSaving, onCancel, onSave }: EntityEdito
   )
   const [visibility, setVisibility] = useState<Visibility>(entity.visibility)
   const [tags, setTags] = useState(entity.tags.join(', '))
+  const [characterTags, setCharacterTags] = useState(entity.characterTags.join(', '))
+  const [locationLevel, setLocationLevel] = useState(entity.locationLevel ?? 1)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -38,6 +40,8 @@ export function EntityEditor({ entity, isSaving, onCancel, onSave }: EntityEdito
       status,
       visibility,
       tags: splitList(tags),
+      characterTags: splitList(characterTags),
+      locationLevel: entity.type === 'location' ? locationLevel : undefined,
     })
   }
 
@@ -51,6 +55,18 @@ export function EntityEditor({ entity, isSaving, onCancel, onSave }: EntityEdito
       </div>
 
       <p className="entity-editor-type">{ru.entityTypes[entity.type]}</p>
+
+      {entity.type === 'location' && <div className="entity-special-field">
+        <label htmlFor="edit-location-level">{ru.locationLevel}</label>
+        <input id="edit-location-level" min="1" onChange={(event) => setLocationLevel(Number(event.target.value))} type="number" value={locationLevel} />
+        <p className="form-hint">{ru.locationLevelHint}</p>
+      </div>}
+
+      {entity.type === 'npc' && <div className="entity-special-field">
+        <label htmlFor="edit-character-tags">{ru.characterTags}</label>
+        <input autoComplete="off" id="edit-character-tags" onChange={(event) => setCharacterTags(event.target.value)} placeholder={ru.characterTagsPlaceholder} value={characterTags} />
+        <p className="form-hint">{ru.characterTagsHint}</p>
+      </div>}
 
       <label htmlFor="edit-entity-name">{ru.entityName}</label>
       <input

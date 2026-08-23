@@ -12,6 +12,7 @@ import {
   getFocusedGraphContext,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
+  GRAPH_ROUTE_CLEARANCE,
   type CampaignGraphEdge,
   type CampaignGraphNode,
   type CampaignGraphNodePositions,
@@ -30,7 +31,6 @@ interface CampaignGraphProps {
 interface GraphDragState {
   nodeId: string
   pointerId: number
-  offsetX: number
   offsetY: number
 }
 
@@ -136,10 +136,13 @@ export function CampaignGraph({ campaign, entityIds, isFiltered = false }: Campa
     }
   }
 
-  function clampPosition(x: number, y: number): { x: number; y: number } {
+  function clampVerticalPosition(node: CampaignGraphNode, y: number): { x: number; y: number } {
     return {
-      x: Math.min(graph.width - GRAPH_NODE_WIDTH / 2, Math.max(GRAPH_NODE_WIDTH / 2, x)),
-      y: Math.min(graph.height - GRAPH_NODE_HEIGHT / 2, Math.max(GRAPH_NODE_HEIGHT / 2, y)),
+      x: node.x,
+      y: Math.min(
+        graph.height - GRAPH_NODE_HEIGHT / 2 - GRAPH_ROUTE_CLEARANCE,
+        Math.max(GRAPH_NODE_HEIGHT / 2 + GRAPH_ROUTE_CLEARANCE, y),
+      ),
     }
   }
 
@@ -173,7 +176,6 @@ export function CampaignGraph({ campaign, entityIds, isFiltered = false }: Campa
     setDragState({
       nodeId: node.entity.id,
       pointerId: event.pointerId,
-      offsetX: node.x - pointer.x,
       offsetY: node.y - pointer.y,
     })
   }
@@ -182,7 +184,9 @@ export function CampaignGraph({ campaign, entityIds, isFiltered = false }: Campa
     if (!dragState || event.pointerId !== dragState.pointerId) return
     const pointer = pointerPosition(event)
     if (!pointer) return
-    const position = clampPosition(pointer.x + dragState.offsetX, pointer.y + dragState.offsetY)
+    const node = graph.nodes.find((item) => item.entity.id === dragState.nodeId)
+    if (!node) return
+    const position = clampVerticalPosition(node, pointer.y + dragState.offsetY)
     const next = { ...positionsRef.current, [dragState.nodeId]: position }
     positionsRef.current = next
     setPositions(next)
@@ -198,14 +202,13 @@ export function CampaignGraph({ campaign, entityIds, isFiltered = false }: Campa
   }
 
   function activateNode(event: KeyboardEvent<SVGGElement>, node: CampaignGraphNode) {
-    if (isLayoutEditing && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+    if (isLayoutEditing && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault()
       const step = event.shiftKey ? 32 : 12
-      const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
       const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
       savePositions({
         ...positionsRef.current,
-        [node.entity.id]: clampPosition(node.x + dx, node.y + dy),
+        [node.entity.id]: clampVerticalPosition(node, node.y + dy),
       })
       setFocusedId(node.entity.id)
       return
@@ -320,12 +323,10 @@ export function CampaignGraph({ campaign, entityIds, isFiltered = false }: Campa
                     }`}
                     key={edge.relationship.id}
                   >
-                    <line
+                    <path
+                      className="graph-edge-route"
+                      d={edge.path}
                       markerEnd={edge.relationship.directed ? 'url(#graph-arrow)' : undefined}
-                      x1={edge.startX}
-                      x2={edge.endX}
-                      y1={edge.startY}
-                      y2={edge.endY}
                     />
                     <text x={edge.labelX} y={edge.labelY} textAnchor="middle">
                       {relationshipLabel(edge)}
@@ -366,6 +367,9 @@ export function CampaignGraph({ campaign, entityIds, isFiltered = false }: Campa
                       {shortened(node.entity.name, 23)}
                     </text>
                     <text className="graph-node-status" x="16" y="69">{ru.lifecycleStatuses[node.entity.status]}</text>
+                    {node.context.length > 0 && <text className="graph-node-context" x="16" y="85">
+                      {shortened(node.context.map((entity) => entity.name).join(' › '), 27)}
+                    </text>}
                   </g>
                 )
               })}
@@ -385,6 +389,12 @@ export function CampaignGraph({ campaign, entityIds, isFiltered = false }: Campa
                   </button>
                 </div>
                 <p>{context.node.entity.summary || ru.noEntitySummary}</p>
+                {context.node.context.length > 0 && <div className="entity-context-tags" aria-label="Контекст сущности">
+                  {context.node.context.map((entity) => <span key={entity.id}>{entity.name}</span>)}
+                </div>}
+                {context.node.entity.characterTags.length > 0 && <div className="entity-character-tags" aria-label="Ролевые теги персонажа">
+                  {context.node.entity.characterTags.map((tag) => <span key={tag}>{tag}</span>)}
+                </div>}
                 {context.incoming.length + context.outgoing.length + context.mutual.length === 0 ? (
                   <p className="graph-no-connections">{ru.noNodeConnections}</p>
                 ) : (

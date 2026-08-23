@@ -131,3 +131,21 @@
   --shadow-window: 0 22px 60px rgba(41, 71, 61, 0.12);
   --focus-ring: 0 0 0 3px rgba(104, 180, 157, 0.3);
 }
+
+:root[data-theme="dark"] {
+  --color-ivory-50: #202a26;
+  --color-ivory-100: #18211e;
+  --color-ivory-200: #2b3732;
+  --color-ivory-logo: #fff8e7;
+  --color-graphite-900: #f5f1e6;
+  --color-graphite-700: #d8d5cb;
+  --color-graphite-600: #c2c1b8;
+  --color-graphite-500: #aaafa9;
+  --color-border: #405048;
+  --color-success-bg: #244b3f;
+  --color-success-text: #c8e2d7;
+  --color-danger-bg: #4a2c29;
+  --color-danger-text: #f2c9c1;
+  --color-danger-border: #c8796b;
+  --shadow-window: 0 22px 60px rgba(0, 0, 0, 0.32);
+}

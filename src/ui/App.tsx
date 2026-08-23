@@ -13,6 +13,7 @@ import {
 import { createAndSaveCampaign } from '../application/campaigns/createAndSaveCampaign'
 import { createAndSaveEntity } from '../application/campaigns/createAndSaveEntity'
 import { createAndSaveRelationships } from '../application/campaigns/createAndSaveRelationship'
+import { buildEntityContextPaths, selectImmediateHierarchyRelationships } from '../application/campaigns/buildEntityContext'
 import { importCampaignFile } from '../application/campaigns/importCampaignFile'
 import {
   removeAndSaveEntityState,
@@ -20,10 +21,16 @@ import {
 } from '../application/campaigns/saveEntityState'
 import { removeAndSaveKnowledge, setAndSaveKnowledge } from '../application/campaigns/saveKnowledge'
 import { applyAndSaveLogicRule, removeAndSaveLogicRule, setAndSaveLogicRule } from '../application/campaigns/saveLogicRule'
+import { applyAndSaveLogicActivation, dismissAndSaveLogicActivation, refreshAndSaveLogicTriggers } from '../application/campaigns/saveLogicTrigger'
 import { addAndSaveSessionEvent, completeAndSaveSession, startAndSaveSession, updateAndSaveSessionContext } from '../application/campaigns/saveSession'
+import { resolveAndSaveSceneCheck } from '../application/campaigns/saveSceneCheck'
+import { advanceAndSaveEncounterTurn, completeAndSaveEncounter, setAndSaveEncounterParticipantHp, startAndSaveEncounter, updateAndSaveEncounterParticipant } from '../application/campaigns/saveEncounter'
+import { processAndSaveImprovisedEntity, quickCreateAndSaveEntity } from '../application/campaigns/saveImprovisation'
+import { applyAndSaveWorldTime, cancelAndSaveScheduledWorldEvent, createAndSaveScheduledWorldEvent, setAndSaveCampaignCalendar } from '../application/campaigns/saveWorldClock'
 import { updateAndSaveEntity } from '../application/campaigns/updateAndSaveEntity'
 import type { CampaignBackup, CampaignRepository } from '../application/ports/CampaignRepository'
 import { parseCampaignFile } from '../domain/campaign/campaignFile'
+import { formatCampaignDateTime } from '../domain/campaign/calendar'
 import {
   ENTITY_TYPES,
   RELATIONSHIP_TYPES,
@@ -36,6 +43,8 @@ import {
 import { IndexedDbCampaignRepository } from '../infrastructure/storage/IndexedDbCampaignRepository'
 import { ru } from '../shared/i18n/ru'
 import { CampaignGraph } from './CampaignGraph'
+import { DesktopUpdateCard } from './DesktopUpdateCard'
+import { ThemeToggle } from './ThemeToggle'
 import { CampaignEventLog } from './CampaignEventLog'
 import { downloadCampaign } from './downloadCampaign'
 import { EntityEditor } from './EntityEditor'
@@ -43,7 +52,12 @@ import { EntityKnowledgeEditor } from './EntityKnowledgeEditor'
 import { EntityStateEditor } from './EntityStateEditor'
 import { groupRelationshipSources } from './groupRelationshipSources'
 import { LogicRuleBuilder } from './LogicRuleBuilder'
+import { LogicActivationQueue } from './LogicActivationQueue'
 import { SessionMode } from './SessionMode'
+import { WorldClockPanel } from './WorldClockPanel'
+import { CAMPAIGN_WORKSPACE_VIEWS, resolveInitialCampaignWorkspaceView, type CampaignWorkspaceView } from './campaignWorkspace'
+import { EncounterPanel } from './EncounterPanel'
+import { ImprovisationPanel } from './ImprovisationPanel'
 import {
   searchCampaignEntities,
   type SearchableEntityStatus,
@@ -57,11 +71,14 @@ function BrandHeader({ campaignName }: { campaignName?: string }) {
         <span className="brand-name">Vista Point</span>
       </div>
       <div className="app-context" aria-label="Состояние приложения">
-        {campaignName && <strong>{campaignName}</strong>}
-        {campaignName && <span aria-hidden="true">·</span>}
-        <span>Локально</span>
-        <span aria-hidden="true">·</span>
-        <span>Без сети</span>
+        <div className="app-status">
+          {campaignName && <strong>{campaignName}</strong>}
+          {campaignName && <span aria-hidden="true">·</span>}
+          <span>Локально</span>
+          <span aria-hidden="true">·</span>
+          <span>Без сети</span>
+        </div>
+        <ThemeToggle />
       </div>
     </header>
   )
@@ -76,7 +93,21 @@ interface CampaignOverviewProps {
 
 type EntityPanelView = 'details' | 'state' | 'knowledge'
 
+const workspaceLabels: Record<CampaignWorkspaceView, { label: string; hint: string }> = {
+  session: { label: 'Сессия', hint: 'Сцена и проведение' },
+  campaign: { label: 'Кампания', hint: 'Сущности и связи' },
+  graph: { label: 'Граф', hint: 'Структура мира' },
+  logic: { label: 'Логика', hint: 'Условия и последствия' },
+  history: { label: 'История', hint: 'Журнал изменений' },
+}
+
 function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: CampaignOverviewProps) {
+  const workspaceStorageKey = `vista-point:campaign-workspace:${campaign.id}`
+  const [workspaceView, setWorkspaceView] = useState<CampaignWorkspaceView>(() => {
+    let stored: string | null = null
+    try { stored = window.localStorage.getItem(workspaceStorageKey) } catch { /* локальная настройка недоступна */ }
+    return resolveInitialCampaignWorkspaceView(campaign.activeSessionId, stored)
+  })
   const [backups, setBackups] = useState<CampaignBackup[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -84,6 +115,8 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [entityType, setEntityType] = useState<EntityType>('location')
   const [entityName, setEntityName] = useState('')
   const [entitySummary, setEntitySummary] = useState('')
+  const [entityLocationLevel, setEntityLocationLevel] = useState(1)
+  const [entityCharacterTags, setEntityCharacterTags] = useState('')
   const [isCreatingEntity, setIsCreatingEntity] = useState(false)
   const [editingEntityId, setEditingEntityId] = useState('')
   const [entityPanelView, setEntityPanelView] = useState<EntityPanelView>('details')
@@ -92,6 +125,8 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [isSavingKnowledge, setIsSavingKnowledge] = useState(false)
   const [isSavingLogic, setIsSavingLogic] = useState(false)
   const [isSavingSession, setIsSavingSession] = useState(false)
+  const [isSavingWorldClock, setIsSavingWorldClock] = useState(false)
+  const [isSavingRuntime, setIsSavingRuntime] = useState(false)
   const [campaignSearch, setCampaignSearch] = useState('')
   const [entityTypeFilters, setEntityTypeFilters] = useState<EntityType[]>([])
   const [entityStatusFilter, setEntityStatusFilter] = useState<'all' | SearchableEntityStatus>('all')
@@ -108,10 +143,11 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [archivingRelationshipId, setArchivingRelationshipId] = useState('')
   const activeEntities = campaign.entities.filter((entity) => entity.status !== 'archived')
   const activeEntityIds = new Set(activeEntities.map((entity) => entity.id))
-  const activeRelationships = campaign.relationships.filter((relationship) =>
+  const activeRelationships = selectImmediateHierarchyRelationships(campaign, campaign.relationships.filter((relationship) =>
     relationship.status !== 'archived' &&
     activeEntityIds.has(relationship.sourceId) &&
-    activeEntityIds.has(relationship.targetId))
+    activeEntityIds.has(relationship.targetId)))
+  const entityContextPaths = useMemo(() => buildEntityContextPaths(campaign), [campaign])
   const availableSourceEntities = activeEntities.filter(
     (entity) => entity.id !== relationshipTargetId,
   )
@@ -139,10 +175,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     () => entitySearchGroups.flatMap((group) => group.results.map((result) => result.entity)),
     [entitySearchGroups],
   )
-  const visibleEntityIds = useMemo(
-    () => visibleEntities.map((entity) => entity.id),
-    [visibleEntities],
-  )
+  const visibleEntityIds = useMemo(() => visibleEntities.map((entity) => entity.id), [visibleEntities])
   const isEntitySearchFiltered = Boolean(
     campaignSearch.trim() || entityTypeFilters.length > 0 || entityStatusFilter !== 'all',
   )
@@ -156,8 +189,14 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   ] as const
 
   function openEntityPanel(entityId: string, view: EntityPanelView) {
+    setWorkspaceView('campaign')
     setEditingEntityId(entityId)
     setEntityPanelView(view)
+  }
+
+  function selectWorkspaceView(view: CampaignWorkspaceView) {
+    setWorkspaceView(view)
+    window.requestAnimationFrame(() => document.getElementById('campaign-workspace-nav')?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
   }
 
   function toggleEntityTypeFilter(type: EntityType) {
@@ -172,16 +211,26 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setEntityStatusFilter('all')
   }
 
+  async function acceptCampaignChange(nextCampaign: Campaign) {
+    const refreshed = await refreshAndSaveLogicTriggers(repository, nextCampaign)
+    onCampaignChanged(refreshed.campaign)
+    if (refreshed.automaticLimitReached) setError('Автоматическая цепочка остановлена после 20 шагов. Проверьте правила и ожидающие срабатывания.')
+  }
+
   useEffect(() => {
     repository.listBackups(campaign.id).then(setBackups).catch(() => setError(ru.storageError))
   }, [campaign.id, repository])
 
   useEffect(() => {
+    try { window.localStorage.setItem(workspaceStorageKey, workspaceView) } catch { /* интерфейс продолжает работать без сохранения вкладки */ }
+  }, [workspaceStorageKey, workspaceView])
+
+  useEffect(() => {
     function handleSearchShortcut(event: globalThis.KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'k') {
         event.preventDefault()
-        campaignSearchInput.current?.focus()
-        campaignSearchInput.current?.select()
+        setWorkspaceView('campaign')
+        window.requestAnimationFrame(() => { campaignSearchInput.current?.focus(); campaignSearchInput.current?.select() })
       } else if (event.key === 'Escape' && document.activeElement === campaignSearchInput.current) {
         setCampaignSearch('')
       }
@@ -221,10 +270,13 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
         type: entityType,
         name: entityName,
         summary: entitySummary,
+        locationLevel: entityType === 'location' ? entityLocationLevel : undefined,
+        characterTags: entityType === 'npc' ? entityCharacterTags.split(',') : undefined,
       })
       setEntityName('')
       setEntitySummary('')
-      onCampaignChanged(result.campaign)
+      setEntityCharacterTags('')
+      await acceptCampaignChange(result.campaign)
       setMessage(ru.entityCreated)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -255,7 +307,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
       setRelationshipSourceSearch('')
       setRelationshipTargetId('')
       setRelationshipDescription('')
-      onCampaignChanged(result.campaign)
+      await acceptCampaignChange(result.campaign)
       setMessage(
         result.relationships.length === 1
           ? ru.relationshipCreated
@@ -277,7 +329,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setIsUpdatingEntity(true)
     try {
       const result = await updateAndSaveEntity(repository, campaign, entity.id, input)
-      if (result.changed) onCampaignChanged(result.campaign)
+      if (result.changed) await acceptCampaignChange(result.campaign)
       setEditingEntityId('')
       setMessage(result.changed ? ru.entityUpdated : ru.entityUnchanged)
     } catch (caught) {
@@ -296,7 +348,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setIsSavingEntityState(true)
     try {
       const result = await setAndSaveEntityState(repository, campaign, entity.id, input)
-      if (result.changed) onCampaignChanged(result.campaign)
+      if (result.changed) await acceptCampaignChange(result.campaign)
       setMessage(result.changed ? ru.stateSaved : ru.entityUnchanged)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -312,7 +364,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setIsSavingEntityState(true)
     try {
       const result = await removeAndSaveEntityState(repository, campaign, entity.id, stateId)
-      onCampaignChanged(result.campaign)
+      await acceptCampaignChange(result.campaign)
       setMessage(ru.stateRemoved)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -328,7 +380,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setIsSavingKnowledge(true)
     try {
       const result = await setAndSaveKnowledge(repository, campaign, input)
-      if (result.changed) onCampaignChanged(result.campaign)
+      if (result.changed) await acceptCampaignChange(result.campaign)
       setMessage(result.changed ? ru.knowledgeSaved : ru.knowledgeUnchanged)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -344,7 +396,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setIsSavingKnowledge(true)
     try {
       const result = await removeAndSaveKnowledge(repository, campaign, knowledgeId)
-      onCampaignChanged(result.campaign)
+      await acceptCampaignChange(result.campaign)
       setMessage(ru.knowledgeRemoved)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -358,7 +410,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setError(''); setMessage(''); setIsSavingLogic(true)
     try {
       const result = await setAndSaveLogicRule(repository, campaign, input)
-      if (result.changed) onCampaignChanged(result.campaign)
+      if (result.changed) await acceptCampaignChange(result.campaign)
       setMessage(result.changed ? ru.logicRuleSaved : ru.logicRuleUnchanged)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -370,7 +422,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setError(''); setMessage(''); setIsSavingLogic(true)
     try {
       const result = await removeAndSaveLogicRule(repository, campaign, ruleId)
-      onCampaignChanged(result.campaign); setMessage(ru.logicRuleRemoved)
+      await acceptCampaignChange(result.campaign); setMessage(ru.logicRuleRemoved)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
       throw caught
@@ -381,7 +433,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setError(''); setMessage(''); setIsSavingLogic(true)
     try {
       const result = await applyAndSaveLogicRule(repository, campaign, ruleId)
-      if (result.changed) onCampaignChanged(result.campaign)
+      if (result.changed) await acceptCampaignChange(result.campaign)
       setMessage(result.changed ? ru.logicRuleApplied : ru.logicRuleNoChanges)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -389,33 +441,100 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     } finally { setIsSavingLogic(false) }
   }
 
+  async function handleLogicActivationApply(activationId: string) {
+    setError(''); setMessage(''); setIsSavingLogic(true)
+    try { const result = await applyAndSaveLogicActivation(repository, campaign, activationId); await acceptCampaignChange(result.campaign); setMessage(ru.logicActivationApplied) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingLogic(false) }
+  }
+
+  async function handleLogicActivationDismiss(activationId: string) {
+    setError(''); setMessage(''); setIsSavingLogic(true)
+    try { const result = await dismissAndSaveLogicActivation(repository, campaign, activationId); await acceptCampaignChange(result.campaign); setMessage(ru.logicActivationDismissed) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingLogic(false) }
+  }
+
   async function handleSessionStart(input: Parameters<typeof startAndSaveSession>[2]) {
     setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await startAndSaveSession(repository, campaign, input); onCampaignChanged(result.campaign); setMessage(ru.sessionStarted) }
+    try { const result = await startAndSaveSession(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.sessionStarted) }
     catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
     finally { setIsSavingSession(false) }
   }
 
   async function handleSessionContext(input: Parameters<typeof updateAndSaveSessionContext>[2]) {
     setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await updateAndSaveSessionContext(repository, campaign, input); if (result.changed) onCampaignChanged(result.campaign); setMessage(result.changed ? ru.sessionContextSaved : ru.sessionContextUnchanged) }
+    try { const result = await updateAndSaveSessionContext(repository, campaign, input); if (result.changed) await acceptCampaignChange(result.campaign); setMessage(result.changed ? ru.sessionContextSaved : ru.sessionContextUnchanged) }
     catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
     finally { setIsSavingSession(false) }
   }
 
   async function handleSessionEvent(input: Parameters<typeof addAndSaveSessionEvent>[2]) {
     setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await addAndSaveSessionEvent(repository, campaign, input); onCampaignChanged(result.campaign); setMessage(ru.sessionEventSaved) }
+    try { const result = await addAndSaveSessionEvent(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.sessionEventSaved) }
     catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
     finally { setIsSavingSession(false) }
   }
 
   async function handleSessionComplete(summary: string) {
     setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await completeAndSaveSession(repository, campaign, summary); onCampaignChanged(result.campaign); setMessage(ru.sessionCompleted) }
+    try { const result = await completeAndSaveSession(repository, campaign, summary); await acceptCampaignChange(result.campaign); setMessage(ru.sessionCompleted) }
     catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
     finally { setIsSavingSession(false) }
   }
+
+  async function handleSceneCheck(input: Parameters<typeof resolveAndSaveSceneCheck>[2]) {
+    setError(''); setMessage(''); setIsSavingSession(true)
+    try { const result = await resolveAndSaveSceneCheck(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(`${ru.checkSaved}: ${result.total} — ${result.succeeded ? ru.checkSuccess : ru.checkFailure}.`) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingSession(false) }
+  }
+
+  async function handleWorldTime(target: string) {
+    setError(''); setMessage(''); setIsSavingWorldClock(true)
+    try { const result = await applyAndSaveWorldTime(repository, campaign, target); await acceptCampaignChange(result.campaign); setMessage(ru.worldTimeChanged) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingWorldClock(false) }
+  }
+
+  async function handleScheduledEventCreate(input: Parameters<typeof createAndSaveScheduledWorldEvent>[2]) {
+    setError(''); setMessage(''); setIsSavingWorldClock(true)
+    try { const result = await createAndSaveScheduledWorldEvent(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.scheduledEventCreated) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingWorldClock(false) }
+  }
+
+  async function handleScheduledEventCancel(id: string) {
+    setError(''); setMessage(''); setIsSavingWorldClock(true)
+    try { const result = await cancelAndSaveScheduledWorldEvent(repository, campaign, id); await acceptCampaignChange(result.campaign); setMessage(ru.scheduledEventCancelled) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingWorldClock(false) }
+  }
+
+  async function handleCalendar(calendar: Parameters<typeof setAndSaveCampaignCalendar>[2]) {
+    setError(''); setMessage(''); setIsSavingWorldClock(true)
+    try { const result = await setAndSaveCampaignCalendar(repository, campaign, calendar); await acceptCampaignChange(result.campaign); setMessage('Календарь кампании сохранён.') }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingWorldClock(false) }
+  }
+
+  async function handleQuickCreate(input: Parameters<typeof quickCreateAndSaveEntity>[2]) {
+    setError(''); setMessage(''); setIsSavingRuntime(true)
+    try { const result = await quickCreateAndSaveEntity(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.quickEntityCreated) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingRuntime(false) }
+  }
+  async function handleImprovisationProcessed(id: string) {
+    setError(''); setMessage(''); setIsSavingRuntime(true)
+    try { const result = await processAndSaveImprovisedEntity(repository, campaign, id); await acceptCampaignChange(result.campaign); setMessage(ru.improvisationProcessed) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
+    finally { setIsSavingRuntime(false) }
+  }
+  async function handleEncounterStart(input: Parameters<typeof startAndSaveEncounter>[2]) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await startAndSaveEncounter(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.encounterStarted) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
+  async function handleEncounterParticipant(input: Parameters<typeof updateAndSaveEncounterParticipant>[2]) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await updateAndSaveEncounterParticipant(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.encounterParticipantSaved) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
+  async function handleEncounterHp(participantId: string, hp: number) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await setAndSaveEncounterParticipantHp(repository, campaign, participantId, hp); if (result.changed) await acceptCampaignChange(result.campaign); setMessage(ru.encounterHpSaved) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
+  async function handleEncounterAdvance() { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await advanceAndSaveEncounterTurn(repository, campaign); await acceptCampaignChange(result.campaign) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
+  async function handleEncounterComplete(outcome: string) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await completeAndSaveEncounter(repository, campaign, outcome); await acceptCampaignChange(result.campaign); setMessage(ru.encounterCompleted) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
 
   async function handleArchiveRelationship(relationshipId: string) {
     const relationship = activeRelationships.find((item) => item.id === relationshipId)
@@ -426,7 +545,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     setArchivingRelationshipId(relationshipId)
     try {
       const result = await archiveAndSaveRelationship(repository, campaign, relationshipId)
-      onCampaignChanged(result.campaign)
+      await acceptCampaignChange(result.campaign)
       setMessage(ru.relationshipDeleted)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
@@ -454,7 +573,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
       if (editingEntityId === entityId) setEditingEntityId('')
       setRelationshipSourceIds((current) => current.filter((id) => id !== entityId))
       if (relationshipTargetId === entityId) setRelationshipTargetId('')
-      onCampaignChanged(result.campaign)
+      await acceptCampaignChange(result.campaign)
       setMessage(
         result.archivedRelationships.length > 0
           ? `Сущность удалена из рабочих представлений. Связей перенесено в архив: ${result.archivedRelationships.length}.`
@@ -501,6 +620,58 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
         {message && <p className="feedback feedback-success" role="status">{message}</p>}
         {error && <p className="feedback feedback-error" role="alert">{error}</p>}
 
+        <nav
+          aria-label="Разделы кампании"
+          className="campaign-workspace-nav"
+          id="campaign-workspace-nav"
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const current = CAMPAIGN_WORKSPACE_VIEWS.indexOf(workspaceView)
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? CAMPAIGN_WORKSPACE_VIEWS.length - 1 :
+              (current + (event.key === 'ArrowRight' ? 1 : -1) + CAMPAIGN_WORKSPACE_VIEWS.length) % CAMPAIGN_WORKSPACE_VIEWS.length
+            selectWorkspaceView(CAMPAIGN_WORKSPACE_VIEWS[next])
+            window.requestAnimationFrame(() => document.getElementById(`campaign-workspace-tab-${CAMPAIGN_WORKSPACE_VIEWS[next]}`)?.focus())
+          }}
+          role="tablist"
+        >
+          {CAMPAIGN_WORKSPACE_VIEWS.map((view) => (
+            <button
+              aria-controls={`campaign-workspace-panel-${view}`}
+              aria-selected={workspaceView === view}
+              className={workspaceView === view ? 'is-active' : ''}
+              id={`campaign-workspace-tab-${view}`}
+              key={view}
+              onClick={() => selectWorkspaceView(view)}
+              role="tab"
+              tabIndex={workspaceView === view ? 0 : -1}
+              type="button"
+            >
+              <strong>{workspaceLabels[view].label}</strong>
+              <span>{workspaceLabels[view].hint}</span>
+              {view === 'session' && campaign.activeSessionId && <i aria-label="Есть активная сессия">Активна</i>}
+              {view === 'logic' && campaign.logicActivations.some((item) => item.status === 'pending') && <i>{campaign.logicActivations.filter((item) => item.status === 'pending').length}</i>}
+            </button>
+          ))}
+        </nav>
+
+        {workspaceView === 'session' && <section aria-labelledby="campaign-workspace-tab-session" className="campaign-workspace-panel" id="campaign-workspace-panel-session" role="tabpanel">
+          <SessionMode
+            campaign={campaign}
+            isSaving={isSavingSession}
+            onAddEvent={handleSessionEvent}
+            onComplete={handleSessionComplete}
+            onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')}
+            onResolveCheck={handleSceneCheck}
+            onStart={handleSessionStart}
+            onUpdateContext={handleSessionContext}
+          />
+          <WorldClockPanel campaign={campaign} isSaving={isSavingWorldClock} onApplyTime={handleWorldTime} onCancelEvent={handleScheduledEventCancel} onCreateEvent={handleScheduledEventCreate} onSetCalendar={handleCalendar} />
+          <EncounterPanel campaign={campaign} isSaving={isSavingRuntime} onAdvance={handleEncounterAdvance} onComplete={handleEncounterComplete} onSetHp={handleEncounterHp} onStart={handleEncounterStart} onUpdateParticipant={handleEncounterParticipant} />
+          <ImprovisationPanel campaign={campaign} isSaving={isSavingRuntime} onCreate={handleQuickCreate} onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')} onProcessed={handleImprovisationProcessed} />
+        </section>}
+
+        {workspaceView === 'campaign' && <section aria-labelledby="campaign-workspace-tab-campaign" className="campaign-workspace-panel" id="campaign-workspace-panel-campaign" role="tabpanel">
         <section className="metric-grid" aria-label="Состояние кампании">
           {counters.map(([label, value]) => (
             <article className="metric" key={label}>
@@ -509,20 +680,10 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             </article>
           ))}
           <article className="metric metric-wide">
-            <span className="metric-date">{new Date(campaign.worldTime).toLocaleString('ru-RU')}</span>
+            <span className="metric-date">{formatCampaignDateTime(campaign.worldTime, campaign.calendar)}</span>
             <p>{ru.worldTime}</p>
           </article>
         </section>
-
-        <SessionMode
-          campaign={campaign}
-          isSaving={isSavingSession}
-          onAddEvent={handleSessionEvent}
-          onComplete={handleSessionComplete}
-          onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')}
-          onStart={handleSessionStart}
-          onUpdateContext={handleSessionContext}
-        />
 
         <section className="campaign-search-panel" aria-labelledby="campaign-search-heading">
           <div className="campaign-search-heading">
@@ -627,6 +788,16 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                         <span>{ru.lifecycleStatuses[entity.status]}</span>
                       </div>
                       <p>{entity.summary || 'Короткая заметка не добавлена.'}</p>
+                      {(entityContextPaths.get(entity.id)?.length ?? 0) > 0 && (
+                        <div className="entity-context-tags" aria-label="Контекст сущности">
+                          {entityContextPaths.get(entity.id)!.map((context) => <span key={context.id}>{context.name}</span>)}
+                        </div>
+                      )}
+                      {entity.characterTags.length > 0 && (
+                        <div className="entity-character-tags" aria-label="Ролевые теги персонажа">
+                          {entity.characterTags.map((tag) => <span key={tag}>{tag}</span>)}
+                        </div>
+                      )}
                       {match && (
                         <p className="entity-search-match">
                           <span>{ru.searchFields[match.field]}</span>
@@ -765,6 +936,11 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                 <option key={type} value={type}>{ru.entityTypes[type]}</option>
               ))}
             </select>
+            {entityType === 'location' && <>
+              <label htmlFor="entity-location-level">{ru.locationLevel}</label>
+              <input id="entity-location-level" min="1" onChange={(event) => setEntityLocationLevel(Number(event.target.value))} type="number" value={entityLocationLevel} />
+              <p className="form-hint">{ru.locationLevelHint}</p>
+            </>}
             <label htmlFor="entity-name">{ru.entityName}</label>
             <input
               autoComplete="off"
@@ -781,6 +957,11 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
               rows={3}
               value={entitySummary}
             />
+            {entityType === 'npc' && <>
+              <label htmlFor="entity-character-tags">{ru.characterTags}</label>
+              <input autoComplete="off" id="entity-character-tags" onChange={(event) => setEntityCharacterTags(event.target.value)} placeholder={ru.characterTagsPlaceholder} value={entityCharacterTags} />
+              <p className="form-hint">{ru.characterTagsHint}</p>
+            </>}
             <button className="button button-primary button-block" disabled={isCreatingEntity} type="submit">
               {isCreatingEntity ? 'Создаём…' : ru.createEntity}
             </button>
@@ -982,20 +1163,35 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             </button>
           </form>
         </section>
-        <CampaignGraph
+        </section>}
+
+        {workspaceView === 'graph' && <section aria-labelledby="campaign-workspace-tab-graph" className="campaign-workspace-panel campaign-workspace-panel-graph" id="campaign-workspace-panel-graph" role="tabpanel">
+          <section className="graph-workspace-tools" aria-label="Фильтры графа">
+            <div><strong>Область графа</strong><span>{visibleEntities.length} из {activeEntities.length} сущностей</span></div>
+            <div className="graph-workspace-search"><input aria-label="Поиск узлов графа" onChange={(event) => setCampaignSearch(event.target.value)} placeholder="Найти узел по названию или данным" type="search" value={campaignSearch} />{campaignSearch && <button aria-label="Очистить поиск графа" onClick={() => setCampaignSearch('')} type="button">×</button>}</div>
+            <div className="graph-workspace-filters" aria-label="Типы узлов графа"><button aria-pressed={entityTypeFilters.length === 0} className={entityTypeFilters.length === 0 ? 'is-active' : ''} onClick={() => setEntityTypeFilters([])} type="button">Все</button>{ENTITY_TYPES.map((type) => <button aria-pressed={entityTypeFilters.includes(type)} className={entityTypeFilters.includes(type) ? 'is-active' : ''} key={type} onClick={() => toggleEntityTypeFilter(type)} type="button">{ru.entityTypes[type]}</button>)}</div>
+            {isEntitySearchFiltered && <button className="link-button" onClick={resetEntitySearch} type="button">Сбросить фильтр графа</button>}
+          </section>
+          <CampaignGraph
           campaign={campaign}
           entityIds={visibleEntityIds}
           isFiltered={isEntitySearchFiltered}
-        />
-        <LogicRuleBuilder
+        /></section>}
+
+        {workspaceView === 'logic' && <section aria-labelledby="campaign-workspace-tab-logic" className="campaign-workspace-panel" id="campaign-workspace-panel-logic" role="tabpanel">
+          <LogicActivationQueue campaign={campaign} isSaving={isSavingLogic} onApply={handleLogicActivationApply} onDismiss={handleLogicActivationDismiss} />
+          <LogicRuleBuilder
           campaign={campaign}
           isSaving={isSavingLogic}
           onApply={handleLogicRuleApply}
           onRemove={handleLogicRuleRemove}
           onSave={handleLogicRuleSave}
-        />
-        <CampaignEventLog campaign={campaign} onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')} />
-        <aside className="notice">{ru.skeletonNotice}</aside>
+          />
+        </section>}
+
+        {workspaceView === 'history' && <section aria-labelledby="campaign-workspace-tab-history" className="campaign-workspace-panel" id="campaign-workspace-panel-history" role="tabpanel">
+          <CampaignEventLog campaign={campaign} onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')} />
+        </section>}
       </main>
     </div>
   )
@@ -1112,6 +1308,8 @@ export default function App() {
 
         {message && <p className="feedback feedback-success" role="status">{message}</p>}
         {error && <p className="feedback feedback-error" role="alert">{error}</p>}
+
+        <DesktopUpdateCard />
 
         <section className="content-grid">
           <div className="campaigns-section">

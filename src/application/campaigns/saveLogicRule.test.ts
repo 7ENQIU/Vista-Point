@@ -12,8 +12,8 @@ function setup() {
 }
 
 const input = {
-  name: 'Активация', enabled: true, groupOperator: 'all' as const, executionMode: 'require_confirmation' as const,
-  conditions: [{ entityId: 'entity-1', field: 'state' as const, stateId: 'state-1', operator: 'equals' as const, value: true }],
+  name: 'Активация', enabled: true, executionMode: 'require_confirmation' as const,
+  conditionGroup: { kind: 'group' as const, operator: 'all' as const, children: [{ kind: 'condition' as const, entityId: 'entity-1', field: 'state' as const, stateId: 'state-1', operator: 'equals' as const, value: true }] },
   effects: [{ entityId: 'entity-1', type: 'set_lifecycle_status' as const, value: 'active' as const }],
 }
 

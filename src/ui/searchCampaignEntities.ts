@@ -13,6 +13,7 @@ export type EntitySearchField =
   | 'summary'
   | 'description'
   | 'tag'
+  | 'character_tag'
   | 'custom_field'
   | 'knowledge'
   | 'state_name'
@@ -90,6 +91,7 @@ function searchableFields(entity: CampaignEntity): EntitySearchMatch[] {
     { field: 'summary', value: entity.summary },
     { field: 'description', value: entity.description },
     ...entity.tags.map((value): EntitySearchMatch => ({ field: 'tag', value })),
+    ...entity.characterTags.map((value): EntitySearchMatch => ({ field: 'character_tag', value })),
     ...Object.entries(entity.customFields).map(([name, value]): EntitySearchMatch => ({
       field: 'custom_field',
       value: customFieldValue(name, value),

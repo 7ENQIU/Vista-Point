@@ -14,8 +14,10 @@ function entity(id: string, type: EntityType, name: string, aliases: string[] = 
     status: 'draft',
     visibility: 'game_master',
     tags: [],
+    characterTags: [],
     customFields: {},
     state: [],
+    origin: { mode: 'preparation', processed: true, worldTime: '2026-08-20T00:00:00.000Z' },
     createdAt: '2026-08-20T00:00:00.000Z',
     updatedAt: '2026-08-20T00:00:00.000Z',
   }

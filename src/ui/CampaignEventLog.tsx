@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import type { Campaign, CampaignEvent } from '../domain/campaign/types'
+import type { Campaign, CampaignCalendar, CampaignEvent } from '../domain/campaign/types'
+import { formatCampaignDateTime } from '../domain/campaign/calendar'
 import { ru } from '../shared/i18n/ru'
 
-type EventGroup = 'all' | 'entity' | 'relationship' | 'state' | 'knowledge' | 'logic' | 'session'
+type EventGroup = 'all' | 'entity' | 'relationship' | 'state' | 'knowledge' | 'logic' | 'session' | 'world' | 'encounter'
 
 export interface EventDescription {
   title: string
@@ -18,6 +19,8 @@ function eventGroup(event: CampaignEvent): Exclude<EventGroup, 'all'> {
   if (event.type.startsWith('knowledge.')) return 'knowledge'
   if (event.type.startsWith('logic.')) return 'logic'
   if (event.type.startsWith('session.')) return 'session'
+  if (event.type.startsWith('world.')) return 'world'
+  if (event.type.startsWith('encounter.')) return 'encounter'
   if (event.type.startsWith('relationship.')) return 'relationship'
   return 'entity'
 }
@@ -38,11 +41,13 @@ const changedFieldLabels: Record<string, string> = {
   tags: 'теги',
 }
 
-export function describeCampaignEvent(event: CampaignEvent): EventDescription {
+export function describeCampaignEvent(event: CampaignEvent, calendar?: CampaignCalendar): EventDescription {
   const payload = event.payload
   if (event.type === 'entity.created') {
     return { title: 'Сущность создана', detail: String(payload.entityName ?? 'Без названия') }
   }
+  if (event.type === 'entity.quick_created') return { title: 'Импровизированный объект создан', detail: String(payload.entityName ?? 'Без названия') }
+  if (event.type === 'entity.quick_create.processed') return { title: 'Импровизация обработана', detail: String(payload.entityName ?? 'Без названия') }
   if (event.type === 'entity.updated') {
     const fields = Array.isArray(payload.changedFields)
       ? payload.changedFields.map((field) => changedFieldLabels[String(field)] ?? String(field))
@@ -107,10 +112,25 @@ export function describeCampaignEvent(event: CampaignEvent): EventDescription {
     const count = Array.isArray(payload.changes) ? payload.changes.length : 0
     return { title: 'Последствия правила применены', detail: `${String(payload.ruleName ?? 'Правило')}: изменений — ${count}.` }
   }
+  if (event.type === 'logic.activation.created') return { title: 'Правило сработало', detail: `${String(payload.ruleName ?? 'Правило')} добавлено в очередь.` }
+  if (event.type === 'logic.activation.applied') return { title: 'Срабатывание обработано', detail: String(payload.ruleName ?? 'Правило') }
+  if (event.type === 'logic.activation.dismissed') return { title: 'Срабатывание отклонено', detail: String(payload.ruleName ?? 'Правило') }
+  if (event.type === 'logic.activation.invalidated') return { title: 'Срабатывание утратило актуальность', detail: String(payload.ruleName ?? 'Правило') }
+  if (event.type === 'logic.activation.limit_reached') return { title: 'Автоматическая цепочка остановлена', detail: `Достигнут предел: ${String(payload.maxAutomaticSteps ?? 20)} шагов.` }
   if (event.type === 'session.started') return { title: 'Сессия начата', detail: String(payload.sessionName ?? 'Без названия') }
   if (event.type === 'session.context.updated') return { title: 'Контекст сессии изменён', detail: 'Обновлены текущая сцена или участники.' }
   if (event.type === 'session.manual_event') return { title: 'Событие сессии', detail: String(payload.description ?? 'Без описания') }
+  if (event.type === 'session.check.resolved') return { title: 'Проверка сцены', detail: `${String(payload.name ?? 'Проверка')}: ${String(payload.total ?? '—')} против ${String(payload.difficulty ?? '—')} — ${payload.succeeded ? 'успех' : 'неудача'}.` }
   if (event.type === 'session.completed') return { title: 'Сессия завершена', detail: String(payload.sessionName ?? 'Без названия') }
+  if (event.type === 'world.time.changed') return { title: 'Мировое время изменено', detail: calendar ? `${formatCampaignDateTime(String(payload.before), calendar)} → ${formatCampaignDateTime(String(payload.after), calendar)}` : `${new Date(String(payload.before)).toLocaleString('ru-RU')} → ${new Date(String(payload.after)).toLocaleString('ru-RU')}` }
+  if (event.type === 'world.scheduled_event.created') return { title: 'Событие запланировано', detail: `${String(payload.title ?? 'Без названия')} · ${calendar ? formatCampaignDateTime(String(payload.occursAt), calendar) : new Date(String(payload.occursAt)).toLocaleString('ru-RU')}` }
+  if (event.type === 'world.calendar.updated') return { title: 'Календарь кампании изменён', detail: String(isRecord(payload.after) ? payload.after.name ?? 'Новый календарь' : 'Новый календарь') }
+  if (event.type === 'world.scheduled_event.cancelled') return { title: 'Запланированное событие отменено', detail: String(payload.title ?? 'Без названия') }
+  if (event.type === 'world.scheduled_event.triggered') return { title: 'Наступило запланированное событие', detail: String(payload.title ?? 'Без названия') }
+  if (event.type === 'encounter.started') return { title: 'Столкновение началось', detail: String(payload.encounterName ?? 'Без названия') }
+  if (event.type === 'encounter.participant.updated') return { title: 'Участник столкновения обновлён', detail: 'Изменены сторона, инициатива или эффекты.' }
+  if (event.type === 'encounter.turn.advanced') return { title: 'Следующий ход', detail: `Раунд ${String(payload.round ?? '—')}.` }
+  if (event.type === 'encounter.completed') return { title: 'Столкновение завершено', detail: String(payload.outcome ?? 'Исход не указан') }
   return { title: 'Событие кампании', detail: event.type }
 }
 
@@ -158,6 +178,8 @@ export function CampaignEventLog({ campaign, onOpenEntity }: CampaignEventLogPro
             <option value="knowledge">{ru.knowledgeEvents}</option>
             <option value="logic">{ru.logicEvents}</option>
             <option value="session">{ru.sessionEvents}</option>
+            <option value="world">{ru.worldEvents}</option>
+            <option value="encounter">{ru.encounterEvents}</option>
           </select>
         </div>
         <div>
@@ -190,7 +212,7 @@ export function CampaignEventLog({ campaign, onOpenEntity }: CampaignEventLogPro
       ) : (
         <div className="event-log-list">
           {events.map((event) => {
-            const description = describeCampaignEvent(event)
+            const description = describeCampaignEvent(event, campaign.calendar)
             return (
               <article className="event-log-row" key={event.id}>
                 <time dateTime={event.occurredAt}>

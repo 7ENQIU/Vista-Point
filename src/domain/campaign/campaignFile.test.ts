@@ -11,6 +11,7 @@ import { addRelationshipToCampaign } from './addRelationship'
 import { archiveEntityInCampaign } from './archiveCampaignItem'
 import { setKnowledgeInCampaign } from './setKnowledge'
 import { setLogicRuleInCampaign } from './logicRules'
+import { refreshLogicTriggersInCampaign } from './logicTriggers'
 import { startSessionInCampaign } from './sessions'
 
 const now = new Date('2026-08-19T18:00:00.000Z')
@@ -44,7 +45,7 @@ describe('campaign file', () => {
 
     const restored = parseCampaignFile(JSON.stringify(file))
 
-    expect(restored.schemaVersion).toBe(5)
+    expect(restored.schemaVersion).toBe(11)
     expect(restored.entities[0].state).toEqual([])
     expect(restored.knowledge).toEqual([])
     expect(restored.logicRules).toEqual([])
@@ -144,18 +145,32 @@ describe('campaign file', () => {
       { type: 'npc', name: 'Макс' }, { entityId: 'e1' },
     ).campaign
     const withRule = setLogicRuleInCampaign(campaign, {
-      name: 'Активация', enabled: true, groupOperator: 'all', executionMode: 'require_confirmation',
-      conditions: [{ entityId: 'e1', field: 'lifecycle_status', operator: 'equals', value: 'draft' }],
+      name: 'Активация', enabled: true, executionMode: 'require_confirmation',
+      trigger: { type: 'on_change', delayMinutes: 0, repeat: 'rearm' },
+      conditionGroup: { kind: 'group', operator: 'all', children: [{ kind: 'condition', entityId: 'e1', field: 'lifecycle_status', operator: 'equals', value: 'draft' }] },
       effects: [{ entityId: 'e1', type: 'set_lifecycle_status', value: 'active' }],
     }, { ruleId: 'rule-1', conditionIds: ['condition-1'], effectIds: ['effect-1'] }).campaign
 
-    expect(parseCampaignFile(serializeCampaignFile(withRule, now))).toEqual(withRule)
+    const withActivation = refreshLogicTriggersInCampaign(withRule, { now, activationIds: ['activation-1'], eventIds: ['activation-event'] }).campaign
+    expect(parseCampaignFile(serializeCampaignFile(withActivation, now))).toEqual(withActivation)
 
     const broken = JSON.parse(serializeCampaignFile(withRule, now))
     broken.campaign.logicRules[0].effects[0] = {
       ...broken.campaign.logicRules[0].effects[0], type: 'set_state', stateId: 'missing', value: 1,
     }
     expect(() => parseCampaignFile(JSON.stringify(broken))).toThrow('ссылки на отсутствующие сущности')
+
+    const brokenCount = JSON.parse(serializeCampaignFile(withRule, now))
+    brokenCount.campaign.logicRules[0].conditionGroup.operator = 'count'
+    brokenCount.campaign.logicRules[0].conditionGroup.minimum = 2
+    expect(() => parseCampaignFile(JSON.stringify(brokenCount))).toThrow('пустые или повторяющиеся данные')
+
+    const brokenTime = JSON.parse(serializeCampaignFile(withRule, now))
+    brokenTime.campaign.logicRules[0].conditionGroup.children[0] = {
+      ...brokenTime.campaign.logicRules[0].conditionGroup.children[0],
+      entityId: undefined, field: 'world_time', operator: 'contains', value: '2026-08-20T10:00:00.000Z',
+    }
+    expect(() => parseCampaignFile(JSON.stringify(brokenTime))).toThrow('ссылки на отсутствующие сущности')
   })
 
   it('экспортирует активную сессию и отклоняет повреждённую текущую сцену', () => {

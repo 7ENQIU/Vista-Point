@@ -53,6 +53,13 @@ export function addRelationshipToCampaign(
   )) {
     throw new Error('Такая связь уже существует.')
   }
+  if (input.directed && (input.type === 'located_in' || input.type === 'contains')) {
+    const child = input.type === 'located_in' ? source : target
+    const parent = input.type === 'located_in' ? target : source
+    if (child.type === 'location' && parent.type === 'location' && child.locationLevel !== undefined && parent.locationLevel !== undefined && child.locationLevel <= parent.locationLevel) {
+      throw new Error(`Уровень вложенной локации «${child.name}» должен быть больше уровня «${parent.name}».`)
+    }
+  }
 
   const now = options.now ?? new Date()
   const timestamp = now.toISOString()

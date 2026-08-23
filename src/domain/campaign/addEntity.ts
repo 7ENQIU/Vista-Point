@@ -4,6 +4,8 @@ export interface CreateEntityInput {
   type: EntityType
   name: string
   summary?: string
+  locationLevel?: number
+  characterTags?: string[]
 }
 
 export interface AddEntityResult {
@@ -16,6 +18,7 @@ export interface AddEntityOptions {
   now?: Date
   entityId?: string
   eventId?: string
+  origin?: CampaignEntity['origin']
 }
 
 export function addEntityToCampaign(
@@ -25,6 +28,9 @@ export function addEntityToCampaign(
 ): AddEntityResult {
   const name = input.name.trim()
   if (!name) throw new Error('Название сущности обязательно.')
+  if (input.locationLevel !== undefined && (input.type !== 'location' || !Number.isInteger(input.locationLevel) || input.locationLevel < 1)) {
+    throw new Error('Уровень локации должен быть целым числом от 1.')
+  }
 
   const now = options.now ?? new Date()
   const timestamp = now.toISOString()
@@ -39,15 +45,18 @@ export function addEntityToCampaign(
     status: 'draft',
     visibility: 'game_master',
     tags: [],
+    characterTags: input.type === 'npc' ? [...new Set((input.characterTags ?? []).map((tag) => tag.trim()).filter(Boolean))] : [],
+    locationLevel: input.type === 'location' ? input.locationLevel : undefined,
     customFields: {},
     state: [],
+    origin: options.origin ?? { mode: 'preparation', processed: true, worldTime: campaign.worldTime },
     createdAt: timestamp,
     updatedAt: timestamp,
   }
   const event: CampaignEvent = {
     id: options.eventId ?? crypto.randomUUID(),
     campaignId: campaign.id,
-    type: 'entity.created',
+    type: entity.origin.mode === 'session_quick_create' ? 'entity.quick_created' : 'entity.created',
     occurredAt: timestamp,
     worldTime: campaign.worldTime,
     source: 'user',
@@ -57,7 +66,7 @@ export function addEntityToCampaign(
     payload: {
       entityType: entity.type,
       entityName: entity.name,
-      creationMode: 'preparation',
+      creationMode: entity.origin.mode,
       newStatus: entity.status,
     },
   }

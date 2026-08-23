@@ -1,5 +1,5 @@
 import { evaluateLogicRule } from '../../domain/campaign/logicRules'
-import type { Campaign, CampaignEntity, CampaignEvent, CampaignSession, KnowledgeRecord, LogicRule } from '../../domain/campaign/types'
+import type { Campaign, CampaignEntity, CampaignEvent, CampaignSession, KnowledgeRecord, LogicConditionGroup, LogicRule } from '../../domain/campaign/types'
 
 export interface SessionRuleView { rule: LogicRule; satisfied: boolean; explanation: string }
 export interface SessionView {
@@ -11,6 +11,12 @@ export interface SessionView {
   knowledge: KnowledgeRecord[]
   rules: SessionRuleView[]
   timeline: CampaignEvent[]
+}
+
+function conditionEntityIds(group: LogicConditionGroup): string[] {
+  return group.children.flatMap((node) => node.kind === 'group'
+    ? conditionEntityIds(node)
+    : [node.entityId, node.targetEntityId, node.subjectEntityId].filter((id): id is string => Boolean(id)))
 }
 
 export function buildSessionView(campaign: Campaign, sessionId = campaign.activeSessionId): SessionView | undefined {
@@ -31,7 +37,7 @@ export function buildSessionView(campaign: Campaign, sessionId = campaign.active
     .filter((entity) => !participantIds.includes(entity.id) && entity.id !== locationId)
   const contextIds = new Set([scene.id, ...participantIds, ...relatedIds])
   const knowledge = campaign.knowledge.filter((record) => record.relatedEntityIds.some((id) => contextIds.has(id)))
-  const rules = campaign.logicRules.filter((rule) => rule.enabled && [...rule.conditions, ...rule.effects].some((item) => contextIds.has(item.entityId))).map((rule) => {
+  const rules = campaign.logicRules.filter((rule) => rule.enabled && [...conditionEntityIds(rule.conditionGroup), ...rule.effects.map((effect) => effect.entityId)].some((id) => contextIds.has(id))).map((rule) => {
     const evaluation = evaluateLogicRule(campaign, rule)
     return { rule, satisfied: evaluation.satisfied, explanation: evaluation.explanation }
   })
