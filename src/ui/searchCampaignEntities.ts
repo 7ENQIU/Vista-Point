@@ -1,12 +1,10 @@
 import {
   ENTITY_TYPES,
   type CampaignEntity,
+  type CustomFieldDefinition,
   type EntityType,
-  type KnowledgeRecord,
-  type LifecycleStatus,
 } from '../domain/campaign/types'
 
-export type SearchableEntityStatus = Exclude<LifecycleStatus, 'archived'>
 export type EntitySearchField =
   | 'name'
   | 'alias'
@@ -15,7 +13,6 @@ export type EntitySearchField =
   | 'tag'
   | 'character_tag'
   | 'custom_field'
-  | 'knowledge'
   | 'state_name'
   | 'state_value'
 
@@ -37,8 +34,7 @@ export interface EntitySearchGroup {
 export interface SearchCampaignEntitiesFilters {
   query: string
   types: EntityType[]
-  status: 'all' | SearchableEntityStatus
-  knowledge?: KnowledgeRecord[]
+  customTypeIds?: string[]
 }
 
 const ENGLISH_KEYBOARD = '`qwertyuiop[]asdfghjkl;\'zxcvbnm,./'
@@ -84,7 +80,12 @@ function customFieldValue(name: string, value: unknown): string {
   }
 }
 
-function searchableFields(entity: CampaignEntity): EntitySearchMatch[] {
+function searchableFields(
+  entity: CampaignEntity,
+  customFieldDefinitions: CustomFieldDefinition[] = [],
+  entitiesById: Map<string, CampaignEntity> = new Map(),
+): EntitySearchMatch[] {
+  const definitionsById = new Map(customFieldDefinitions.map((field) => [field.id, field]))
   const fields: EntitySearchMatch[] = [
     { field: 'name', value: entity.name },
     ...entity.aliases.map((value): EntitySearchMatch => ({ field: 'alias', value })),
@@ -92,9 +93,12 @@ function searchableFields(entity: CampaignEntity): EntitySearchMatch[] {
     { field: 'description', value: entity.description },
     ...entity.tags.map((value): EntitySearchMatch => ({ field: 'tag', value })),
     ...entity.characterTags.map((value): EntitySearchMatch => ({ field: 'character_tag', value })),
-    ...Object.entries(entity.customFields).map(([name, value]): EntitySearchMatch => ({
+    ...Object.entries(entity.customFields).map(([id, value]): EntitySearchMatch => ({
       field: 'custom_field',
-      value: customFieldValue(name, value),
+      value: customFieldValue(definitionsById.get(id)?.name ?? id,
+        definitionsById.get(id)?.type === 'entity_reference' && typeof value === 'string'
+          ? entitiesById.get(value)?.name ?? value
+          : value),
     })),
     ...entity.state.flatMap((state): EntitySearchMatch[] => [
       { field: 'state_name', value: state.name },
@@ -102,13 +106,6 @@ function searchableFields(entity: CampaignEntity): EntitySearchMatch[] {
     ]),
   ]
   return fields.filter((item) => item.value.trim())
-}
-
-function knowledgeFields(knowledge: KnowledgeRecord[]): EntitySearchMatch[] {
-  return knowledge.flatMap((record): EntitySearchMatch[] => [
-    { field: 'knowledge', value: record.content },
-    ...(record.source ? [{ field: 'knowledge' as const, value: record.source }] : []),
-  ])
 }
 
 function matchesVariants(value: string, variants: string[]): boolean {
@@ -119,15 +116,13 @@ function matchesVariants(value: string, variants: string[]): boolean {
 export function findEntitySearchMatch(
   entity: CampaignEntity,
   query: string,
-  knowledge: KnowledgeRecord[] = [],
+  customFieldDefinitions: CustomFieldDefinition[] = [],
+  entitiesById: Map<string, CampaignEntity> = new Map(),
 ): EntitySearchMatch | undefined {
   const queryParts = normalizeInput(query).split(/\s+/).filter(Boolean).map(searchVariants)
   if (queryParts.length === 0) return undefined
 
-  const fields = [
-    ...searchableFields(entity),
-    ...knowledgeFields(knowledge.filter((record) => record.relatedEntityIds.includes(entity.id))),
-  ]
+  const fields = searchableFields(entity, customFieldDefinitions, entitiesById)
   const haystack = fields.map((item) => item.value).join(' ')
   if (!queryParts.every((variants) => matchesVariants(haystack, variants))) return undefined
 
@@ -141,13 +136,17 @@ export function entityMatchesQuery(entity: CampaignEntity, query: string): boole
 export function searchCampaignEntities(
   entities: CampaignEntity[],
   filters: SearchCampaignEntitiesFilters,
+  customFieldDefinitions: CustomFieldDefinition[] = [],
 ): EntitySearchGroup[] {
   const allowedTypes = new Set(filters.types)
+  const allowedCustomTypes = new Set(filters.customTypeIds ?? [])
+  const entitiesById = new Map(entities.map((entity) => [entity.id, entity]))
   const matched = entities.flatMap((entity): EntitySearchResult[] => {
     if (entity.status === 'archived') return []
-    if (allowedTypes.size > 0 && !allowedTypes.has(entity.type)) return []
-    if (filters.status !== 'all' && entity.status !== filters.status) return []
-    const match = findEntitySearchMatch(entity, filters.query, filters.knowledge)
+    if (allowedTypes.size > 0 || allowedCustomTypes.size > 0) {
+      if (!allowedTypes.has(entity.type) && (!entity.customTypeId || !allowedCustomTypes.has(entity.customTypeId))) return []
+    }
+    const match = findEntitySearchMatch(entity, filters.query, customFieldDefinitions, entitiesById)
     if (normalizeInput(filters.query) && !match) return []
     return [{ entity, match }]
   })

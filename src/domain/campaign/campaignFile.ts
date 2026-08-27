@@ -1,6 +1,10 @@
 import {
   CAMPAIGN_SCHEMA_VERSION,
+  CUSTOM_FIELD_TYPES,
   ENTITY_TYPES,
+  FACT_TYPES,
+  ENTITY_IMAGE_MAX_DATA_URL_LENGTH,
+  ENTITY_IMAGE_MIME_TYPES,
   KNOWLEDGE_STATUSES,
   KNOWLEDGE_SUBJECT_TYPES,
   KNOWLEDGE_TRUTH_VALUES,
@@ -20,6 +24,10 @@ import {
   type CampaignEntity,
   type CampaignEncounter,
   type CampaignEvent,
+  type CustomFieldDefinition,
+  type CustomEntityType,
+  type SavedGraphView,
+  type EntityTemplate,
   type CampaignSession,
   type KnowledgeRecord,
   type LogicCondition,
@@ -29,6 +37,8 @@ import {
   type LogicActivation,
   type LogicRule,
   type LogicTriggerState,
+  type HotbarSlot,
+  type Predicate,
   type Relationship,
   type ScheduledWorldEvent,
 } from './types'
@@ -109,17 +119,29 @@ function isEntityState(value: unknown): boolean {
 
 function isEntity(value: unknown, campaignId: string): value is CampaignEntity {
   if (!isRecord(value)) return false
+  const imageIsValid = value.image === undefined || (
+    isRecord(value.image) &&
+    isString(value.image.mimeType) &&
+    ENTITY_IMAGE_MIME_TYPES.includes(value.image.mimeType as (typeof ENTITY_IMAGE_MIME_TYPES)[number]) &&
+    isString(value.image.fileName) && Boolean(value.image.fileName.trim()) &&
+    isIsoDate(value.image.updatedAt) &&
+    isString(value.image.dataUrl) &&
+    value.image.dataUrl.length <= ENTITY_IMAGE_MAX_DATA_URL_LENGTH &&
+    value.image.dataUrl.startsWith(`data:${value.image.mimeType};base64,`)
+  )
   return (
     isString(value.id) &&
     value.campaignId === campaignId &&
     isString(value.type) &&
     ENTITY_TYPES.includes(value.type as CampaignEntity['type']) &&
+    (value.customTypeId === undefined || isString(value.customTypeId)) &&
     isString(value.name) &&
     isStringArray(value.aliases) &&
     isString(value.summary) &&
     isString(value.description) &&
-    isString(value.status) &&
-    isString(value.visibility) &&
+    isString(value.dmNotes) &&
+    imageIsValid &&
+    (value.status === 'active' || value.status === 'archived') &&
     isStringArray(value.tags) &&
     isStringArray(value.characterTags) &&
     (value.locationLevel === undefined || (value.type === 'location' && Number.isInteger(value.locationLevel) && Number(value.locationLevel) >= 1)) &&
@@ -135,6 +157,36 @@ function isEntity(value: unknown, campaignId: string): value is CampaignEntity {
     isIsoDate(value.createdAt) &&
     isIsoDate(value.updatedAt)
   )
+}
+
+function isCustomFieldDefinition(value: unknown): value is CustomFieldDefinition {
+  return isRecord(value) && isString(value.id) && Boolean(value.id) &&
+    isString(value.name) && Boolean(value.name.trim()) && isString(value.type) &&
+    CUSTOM_FIELD_TYPES.includes(value.type as CustomFieldDefinition['type'])
+}
+
+function isCustomEntityType(value: unknown, campaignId: string): value is CustomEntityType {
+  return isRecord(value) && isString(value.id) && Boolean(value.id) && value.campaignId === campaignId &&
+    isString(value.name) && Boolean(value.name.trim()) && isString(value.baseType) &&
+    ENTITY_TYPES.includes(value.baseType as CustomEntityType['baseType']) &&
+    isIsoDate(value.createdAt) && isIsoDate(value.updatedAt)
+}
+
+function isSavedGraphView(value: unknown, campaignId: string): value is SavedGraphView {
+  return isRecord(value) && isString(value.id) && Boolean(value.id) && value.campaignId === campaignId &&
+    isString(value.name) && Boolean(value.name.trim()) && isString(value.query) &&
+    Array.isArray(value.entityTypes) && value.entityTypes.every((type) => isString(type) && ENTITY_TYPES.includes(type as SavedGraphView['entityTypes'][number])) &&
+    isStringArray(value.customEntityTypeIds) && isIsoDate(value.createdAt) && isIsoDate(value.updatedAt)
+}
+
+function isEntityTemplate(value: unknown, campaignId: string): value is EntityTemplate {
+  return isRecord(value) && isString(value.id) && Boolean(value.id) && value.campaignId === campaignId &&
+    isString(value.name) && Boolean(value.name.trim()) && isString(value.entityType) &&
+    ENTITY_TYPES.includes(value.entityType as EntityTemplate['entityType']) &&
+    (value.customTypeId === undefined || isString(value.customTypeId)) && isString(value.summary) &&
+    isString(value.description) && isString(value.dmNotes) && isStringArray(value.tags) &&
+    isStringArray(value.characterTags) && isRecord(value.customFields) &&
+    isIsoDate(value.createdAt) && isIsoDate(value.updatedAt)
 }
 
 function isCampaignEncounter(value: unknown, campaignId: string): value is CampaignEncounter {
@@ -156,13 +208,33 @@ function isRelationship(value: unknown, campaignId: string): value is Relationsh
     value.campaignId === campaignId &&
     isString(value.sourceId) &&
     isString(value.targetId) &&
+    isString(value.predicateId) &&
     isString(value.type) &&
-    RELATIONSHIP_TYPES.includes(value.type as Relationship['type']) &&
+    FACT_TYPES.includes(value.type as Relationship['type']) &&
     typeof value.directed === 'boolean' &&
     isString(value.description) &&
-    isString(value.status) &&
-    isString(value.visibility)
+    isString(value.status)
   )
+}
+
+function isHotbarSlot(value: unknown): value is HotbarSlot {
+  if (!isRecord(value) || !Number.isInteger(value.slot)) return false
+  if (value.preset === undefined) return true
+  return isRecord(value.preset) && value.preset.type === 'create_fact' &&
+    isString(value.preset.label) && Boolean(value.preset.label.trim()) &&
+    isString(value.preset.predicateId) && typeof value.preset.directed === 'boolean' &&
+    isString(value.preset.description)
+}
+
+function isPredicate(value: unknown, campaignId: string): value is Predicate {
+  if (!isRecord(value)) return false
+  return isString(value.id) && Boolean(value.id) && value.campaignId === campaignId &&
+    isString(value.directLabel) && Boolean(value.directLabel.trim()) &&
+    isString(value.inverseLabel) && Boolean(value.inverseLabel.trim()) &&
+    isString(value.description) && typeof value.directed === 'boolean' &&
+    (value.systemType === undefined || (isString(value.systemType) && RELATIONSHIP_TYPES.includes(value.systemType as Predicate['systemType'] & string))) &&
+    (value.status === 'draft' || value.status === 'active' || value.status === 'archived') &&
+    isIsoDate(value.createdAt) && isIsoDate(value.updatedAt)
 }
 
 function isCampaignEvent(value: unknown, campaignId: string): value is CampaignEvent {
@@ -229,8 +301,10 @@ function isLogicCondition(value: unknown): value is LogicCondition {
   return value.kind === 'condition' && isString(value.id) && (value.entityId === undefined || isString(value.entityId)) &&
     isString(value.field) && LOGIC_CONDITION_FIELDS.includes(value.field as LogicCondition['field']) &&
     (value.stateId === undefined || isString(value.stateId)) &&
+    (value.customFieldId === undefined || isString(value.customFieldId)) &&
     (value.targetEntityId === undefined || isString(value.targetEntityId)) &&
     (value.relationshipType === undefined || RELATIONSHIP_TYPES.includes(value.relationshipType as (typeof RELATIONSHIP_TYPES)[number])) &&
+    (value.predicateId === undefined || isString(value.predicateId)) &&
     (value.subjectType === undefined || KNOWLEDGE_SUBJECT_TYPES.includes(value.subjectType as (typeof KNOWLEDGE_SUBJECT_TYPES)[number])) &&
     (value.subjectEntityId === undefined || isString(value.subjectEntityId)) &&
     isString(value.operator) && LOGIC_CONDITION_OPERATORS.includes(value.operator as LogicCondition['operator']) &&
@@ -247,9 +321,12 @@ function isLogicConditionGroup(value: unknown): value is LogicConditionGroup {
 
 function isLogicEffect(value: unknown): value is LogicEffect {
   if (!isRecord(value)) return false
-  return isString(value.id) && isString(value.entityId) &&
-    isString(value.type) && LOGIC_EFFECT_TYPES.includes(value.type as LogicEffect['type']) &&
-    (value.stateId === undefined || isString(value.stateId)) &&
+  if (!isString(value.id) || !isString(value.entityId) || !isString(value.type) || !LOGIC_EFFECT_TYPES.includes(value.type as LogicEffect['type'])) return false
+  if (value.type === 'create_fact') return isString(value.targetEntityId) && isString(value.predicateId) && typeof value.directed === 'boolean' &&
+    isString(value.description)
+  if (value.type === 'set_custom_field') return isString(value.customFieldId) &&
+    (typeof value.value === 'string' || typeof value.value === 'number' || typeof value.value === 'boolean')
+  return (value.type !== 'set_state' || isString(value.stateId)) &&
     (typeof value.value === 'string' || typeof value.value === 'number' || typeof value.value === 'boolean')
 }
 
@@ -299,7 +376,13 @@ export function validateCampaign(value: unknown): Campaign {
     !isIsoDate(value.createdAt) ||
     !isIsoDate(value.updatedAt) ||
     !Array.isArray(value.entities) ||
+    !Array.isArray(value.predicates) ||
     !Array.isArray(value.relationships) ||
+    !Array.isArray(value.hotbar) ||
+    !Array.isArray(value.customFieldDefinitions) ||
+    !Array.isArray(value.customEntityTypes) ||
+    !Array.isArray(value.savedGraphViews) ||
+    !Array.isArray(value.entityTemplates) ||
     !Array.isArray(value.knowledge) ||
     !Array.isArray(value.logicRules) ||
     !Array.isArray(value.logicTriggerStates) ||
@@ -318,8 +401,26 @@ export function validateCampaign(value: unknown): Campaign {
   if (!value.entities.every((entity) => isEntity(entity, campaignId))) {
     throw new CampaignFileError('Одна или несколько сущностей имеют неверную структуру.')
   }
+  if (!value.predicates.every((predicate) => isPredicate(predicate, campaignId))) {
+    throw new CampaignFileError('Один или несколько предикатов имеют неверную структуру.')
+  }
   if (!value.relationships.every((relationship) => isRelationship(relationship, campaignId))) {
     throw new CampaignFileError('Одна или несколько связей имеют неверную структуру.')
+  }
+  if (!value.hotbar.every(isHotbarSlot)) {
+    throw new CampaignFileError('Один или несколько слотов хотбара имеют неверную структуру.')
+  }
+  if (!value.customFieldDefinitions.every(isCustomFieldDefinition)) {
+    throw new CampaignFileError('Одно или несколько пользовательских полей имеют неверную структуру.')
+  }
+  if (!value.customEntityTypes.every((customType) => isCustomEntityType(customType, campaignId))) {
+    throw new CampaignFileError('Один или несколько пользовательских типов сущностей имеют неверную структуру.')
+  }
+  if (!value.savedGraphViews.every((view) => isSavedGraphView(view, campaignId))) {
+    throw new CampaignFileError('Один или несколько сохранённых видов графа имеют неверную структуру.')
+  }
+  if (!value.entityTemplates.every((template) => isEntityTemplate(template, campaignId))) {
+    throw new CampaignFileError('Один или несколько шаблонов карточек имеют неверную структуру.')
   }
   if (!value.eventLog.every((event) => isCampaignEvent(event, campaignId))) {
     throw new CampaignFileError('Одна или несколько записей журнала имеют неверную структуру.')
@@ -344,8 +445,64 @@ export function validateCampaign(value: unknown): Campaign {
   }
 
   const entityIds = new Set(value.entities.map((entity) => entity.id))
+  const customEntityTypes = value.customEntityTypes as CustomEntityType[]
   if (entityIds.size !== value.entities.length) {
     throw new CampaignFileError('В кампании обнаружены повторяющиеся идентификаторы сущностей.')
+  }
+  const predicateIds = new Set(value.predicates.map((predicate) => predicate.id))
+  if (predicateIds.size !== value.predicates.length) {
+    throw new CampaignFileError('В кампании обнаружены повторяющиеся идентификаторы предикатов.')
+  }
+  const hotbarSlots = value.hotbar.map((item) => item.slot)
+  if (hotbarSlots.length !== 10 || new Set(hotbarSlots).size !== 10 || hotbarSlots.some((slot, index) => slot !== index + 1)) {
+    throw new CampaignFileError('Хотбар должен содержать десять упорядоченных слотов.')
+  }
+  if (value.hotbar.some((slot) => slot.preset && !predicateIds.has(slot.preset.predicateId))) {
+    throw new CampaignFileError('Хотбар ссылается на отсутствующий предикат.')
+  }
+  const customFieldIds = new Set(value.customFieldDefinitions.map((field) => field.id))
+  const customFieldNames = new Set(value.customFieldDefinitions.map((field) => field.name.trim().toLocaleLowerCase('ru-RU')))
+  if (customFieldIds.size !== value.customFieldDefinitions.length || customFieldNames.size !== value.customFieldDefinitions.length) {
+    throw new CampaignFileError('Пользовательские поля содержат повторяющиеся идентификаторы или названия.')
+  }
+  const customFieldDefinitions = new Map(value.customFieldDefinitions.map((field) => [field.id, field]))
+  const customEntityTypeIds = new Set(customEntityTypes.map((item) => item.id))
+  const customEntityTypeNames = new Set(customEntityTypes.map((item) => item.name.trim().toLocaleLowerCase('ru-RU')))
+  if (customEntityTypeIds.size !== customEntityTypes.length || customEntityTypeNames.size !== customEntityTypes.length) {
+    throw new CampaignFileError('Пользовательские типы сущностей содержат повторяющиеся идентификаторы или названия.')
+  }
+  if (value.entities.some((entity) => entity.customTypeId && !customEntityTypes.some((item) => item.id === entity.customTypeId && item.baseType === entity.type))) {
+    throw new CampaignFileError('Сущность ссылается на отсутствующий или несовместимый пользовательский тип.')
+  }
+  const savedGraphViewIds = new Set(value.savedGraphViews.map((view) => view.id))
+  const savedGraphViewNames = new Set(value.savedGraphViews.map((view) => view.name.trim().toLocaleLowerCase('ru-RU')))
+  if (savedGraphViewIds.size !== value.savedGraphViews.length || savedGraphViewNames.size !== value.savedGraphViews.length) {
+    throw new CampaignFileError('Сохранённые виды графа содержат повторяющиеся идентификаторы или названия.')
+  }
+  if (value.savedGraphViews.some((view) => new Set(view.entityTypes).size !== view.entityTypes.length ||
+    new Set(view.customEntityTypeIds).size !== view.customEntityTypeIds.length ||
+    view.customEntityTypeIds.some((typeId) => !customEntityTypeIds.has(typeId)))) {
+    throw new CampaignFileError('Сохранённый вид графа содержит повторяющиеся или отсутствующие типы сущностей.')
+  }
+  const customFieldsAreInvalid = (customFields: Record<string, unknown>) => Object.entries(customFields).some(([fieldId, fieldValue]) => {
+    const definition = customFieldDefinitions.get(fieldId)
+    if (!definition) return true
+    if (definition.type === 'boolean') return typeof fieldValue !== 'boolean'
+    if (definition.type === 'number') return typeof fieldValue !== 'number' || !Number.isFinite(fieldValue)
+    if (typeof fieldValue !== 'string') return true
+    return definition.type === 'entity_reference' && Boolean(fieldValue) && !entityIds.has(fieldValue)
+  })
+  const hasInvalidCustomFields = value.entities.some((entity) => customFieldsAreInvalid(entity.customFields))
+  if (hasInvalidCustomFields) {
+    throw new CampaignFileError('Значения пользовательских полей повреждены или ссылаются на отсутствующие данные.')
+  }
+  const templateIds = new Set(value.entityTemplates.map((template) => template.id))
+  const templateNames = new Set(value.entityTemplates.map((template) => template.name.trim().toLocaleLowerCase('ru-RU')))
+  if (templateIds.size !== value.entityTemplates.length || templateNames.size !== value.entityTemplates.length ||
+    value.entityTemplates.some((template) => (template.entityType !== 'npc' && template.characterTags.length > 0) ||
+      (template.customTypeId && !customEntityTypes.some((item) => item.id === template.customTypeId && item.baseType === template.entityType)) ||
+      customFieldsAreInvalid(template.customFields))) {
+    throw new CampaignFileError('Шаблоны карточек содержат повторяющиеся названия или повреждённые значения.')
   }
   const hasInvalidStateVariables = value.entities.some((entity) => {
     const stateIds = new Set(entity.state.map((state) => state.id))
@@ -389,7 +546,8 @@ export function validateCampaign(value: unknown): Campaign {
     (relationship) =>
       relationship.sourceId === relationship.targetId ||
       !entityIds.has(relationship.sourceId) ||
-      !entityIds.has(relationship.targetId),
+      !entityIds.has(relationship.targetId) ||
+      !predicateIds.has(relationship.predicateId),
   )
   const hasBrokenEventLinks = value.eventLog.some((event) =>
     event.relatedEntityIds.some((id) => !entityIds.has(id)),
@@ -417,8 +575,9 @@ export function validateCampaign(value: unknown): Campaign {
     const nodes = flattenLogicNodes(rule.conditionGroup)
     const nodeIds = new Set(nodes.map((node) => node.id))
     const effectIds = new Set(rule.effects.map((effect) => effect.id))
-    const effectTargets = new Set(rule.effects.map((effect) =>
-      `${effect.entityId}:${effect.type}:${effect.type === 'set_state' ? effect.stateId : 'status'}`))
+    const effectTargets = new Set(rule.effects.map((effect) => effect.type === 'create_fact'
+      ? `${effect.type}:${effect.predicateId}:${effect.directed}:${effect.directed ? `${effect.entityId}:${effect.targetEntityId}` : [effect.entityId, effect.targetEntityId].sort().join(':')}`
+      : `${effect.entityId}:${effect.type}:${effect.type === 'set_state' ? effect.stateId : effect.type === 'set_custom_field' ? effect.customFieldId : 'status'}`))
     return !rule.id || !rule.name.trim() || rule.conditionGroup.children.length === 0 || rule.effects.length === 0 ||
       nodeIds.size !== nodes.length || hasInvalidLogicGroup(rule.conditionGroup) || effectIds.size !== rule.effects.length ||
       effectTargets.size !== rule.effects.length
@@ -431,7 +590,24 @@ export function validateCampaign(value: unknown): Campaign {
       const condition = node
       if (condition.field === 'world_time') return !['equals', 'not_equals', 'greater', 'greater_or_equal', 'less', 'less_or_equal'].includes(condition.operator) || typeof condition.value !== 'string' || Number.isNaN(Date.parse(condition.value))
       const entity = entityById.get(condition.entityId!)
-      if (condition.field === 'relationship') return !entity || !entityById.has(condition.targetEntityId!) || !condition.relationshipType || !['exists', 'not_exists'].includes(condition.operator)
+      if (condition.field === 'relationship') return !entity || !entityById.has(condition.targetEntityId!) ||
+        (!condition.predicateId && !condition.relationshipType) || (condition.predicateId ? !predicateIds.has(condition.predicateId) : false) ||
+        !['exists', 'not_exists'].includes(condition.operator)
+      if (condition.field === 'custom_field') {
+        const definition = customFieldDefinitions.get(condition.customFieldId ?? '')
+        const existence = condition.operator === 'exists' || condition.operator === 'not_exists'
+        if (!entity || !definition) return true
+        if (existence) return false
+        const valueValid = definition.type === 'boolean' ? typeof condition.value === 'boolean'
+          : definition.type === 'number' ? typeof condition.value === 'number' && Number.isFinite(condition.value)
+            : typeof condition.value === 'string'
+        const operatorValid = definition.type === 'number'
+          ? ['equals', 'not_equals', 'greater', 'greater_or_equal', 'less', 'less_or_equal'].includes(condition.operator)
+          : definition.type === 'text'
+            ? ['equals', 'not_equals', 'contains', 'not_contains'].includes(condition.operator)
+            : ['equals', 'not_equals'].includes(condition.operator)
+        return !valueValid || !operatorValid || (definition.type === 'entity_reference' && Boolean(condition.value) && !entityIds.has(String(condition.value)))
+      }
       if (condition.field === 'knowledge') return !entity || !condition.subjectType ||
         !['exists', 'not_exists', 'equals', 'not_equals'].includes(condition.operator) ||
         (condition.subjectType === 'entity' && !entityById.has(condition.subjectEntityId!)) ||
@@ -443,10 +619,18 @@ export function validateCampaign(value: unknown): Campaign {
         : (!condition.stateId || (!existence && (!state || !isStateValue(condition.value, state.valueType)))))
     }) || rule.effects.some((effect) => {
       const entity = entityById.get(effect.entityId)
-      const state = entity?.state.find((item) => item.id === effect.stateId)
-      return !entity || (effect.type === 'set_state'
-        ? !state || !isStateValue(effect.value, state.valueType)
-        : !['draft', 'active'].includes(String(effect.value)))
+      if (!entity) return true
+      if (effect.type === 'create_fact') return !entityById.has(effect.targetEntityId) || effect.entityId === effect.targetEntityId || !predicateIds.has(effect.predicateId)
+      if (effect.type === 'set_custom_field') {
+        const definition = customFieldDefinitions.get(effect.customFieldId)
+        if (!definition) return true
+        const valueValid = definition.type === 'boolean' ? typeof effect.value === 'boolean'
+          : definition.type === 'number' ? typeof effect.value === 'number' && Number.isFinite(effect.value)
+            : typeof effect.value === 'string'
+        return !valueValid || (definition.type === 'entity_reference' && Boolean(effect.value) && !entityIds.has(String(effect.value)))
+      }
+      const state = effect.type === 'set_state' ? entity.state.find((item) => item.id === effect.stateId) : undefined
+      return effect.type === 'set_state' ? !state || !isStateValue(effect.value, state.valueType) : !['draft', 'active'].includes(String(effect.value))
     })) || value.logicRules.some((rule) => rule.executionMode === 'automatic' && rule.trigger.type === 'manual')
   const hasBrokenLogicRuntime = value.logicTriggerStates.some((state) => !logicRuleIds.has(state.ruleId) || (state.lastEventId && !eventIds.has(state.lastEventId))) ||
     value.logicActivations.some((activation) => !eventIds.has(activation.sourceEventId) || (activation.status === 'pending' && !logicRuleIds.has(activation.ruleId)) || (activation.status === 'pending' ? Boolean(activation.resolvedAt) : !activation.resolvedAt))

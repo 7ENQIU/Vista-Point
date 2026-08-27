@@ -1,12 +1,13 @@
-import type { Campaign, CampaignEvent, Relationship, RelationshipType, Visibility } from './types'
+import type { Campaign, CampaignEvent, Relationship, RelationshipType } from './types'
+import { builtinPredicateId } from './predicateCatalog'
 
 export interface CreateRelationshipInput {
   sourceId: string
   targetId: string
-  type: RelationshipType
-  directed: boolean
+  type?: RelationshipType
+  predicateId?: string
+  directed?: boolean
   description?: string
-  visibility?: Visibility
 }
 
 export interface AddRelationshipResult {
@@ -21,11 +22,11 @@ export interface AddRelationshipOptions {
   eventId?: string
 }
 
-function isSameRelationship(existing: Relationship, input: CreateRelationshipInput): boolean {
+export function isSameRelationship(existing: Relationship, input: { sourceId: string; targetId: string; predicateId: string; directed: boolean }): boolean {
   const sameDirection = existing.sourceId === input.sourceId && existing.targetId === input.targetId
   const reverseDirection = existing.sourceId === input.targetId && existing.targetId === input.sourceId
   return (
-    existing.type === input.type &&
+    existing.predicateId === input.predicateId &&
     existing.directed === input.directed &&
     (sameDirection || (!input.directed && reverseDirection))
   )
@@ -48,19 +49,17 @@ export function addRelationshipToCampaign(
   if (source.status === 'archived' || target.status === 'archived') {
     throw new Error('Нельзя создать связь с удалённой сущностью.')
   }
+  const predicateId = input.predicateId ?? (input.type ? builtinPredicateId(input.type) : '')
+  const predicate = campaign.predicates.find((item) => item.id === predicateId && item.status !== 'archived')
+  if (!predicate) throw new Error('Предикат связи не найден или удалён.')
+  const factType = predicate.systemType ?? input.type ?? 'custom'
+  const directed = input.directed ?? predicate.directed
+  const normalizedInput = { sourceId: input.sourceId, targetId: input.targetId, predicateId, directed }
   if (campaign.relationships.some(
-    (relationship) => relationship.status !== 'archived' && isSameRelationship(relationship, input),
+    (relationship) => relationship.status !== 'archived' && isSameRelationship(relationship, normalizedInput),
   )) {
     throw new Error('Такая связь уже существует.')
   }
-  if (input.directed && (input.type === 'located_in' || input.type === 'contains')) {
-    const child = input.type === 'located_in' ? source : target
-    const parent = input.type === 'located_in' ? target : source
-    if (child.type === 'location' && parent.type === 'location' && child.locationLevel !== undefined && parent.locationLevel !== undefined && child.locationLevel <= parent.locationLevel) {
-      throw new Error(`Уровень вложенной локации «${child.name}» должен быть больше уровня «${parent.name}».`)
-    }
-  }
-
   const now = options.now ?? new Date()
   const timestamp = now.toISOString()
   const relationship: Relationship = {
@@ -68,11 +67,11 @@ export function addRelationshipToCampaign(
     campaignId: campaign.id,
     sourceId: input.sourceId,
     targetId: input.targetId,
-    type: input.type,
-    directed: input.directed,
+    type: factType,
+    predicateId,
+    directed,
     description: input.description?.trim() ?? '',
     status: 'active',
-    visibility: input.visibility ?? 'game_master',
   }
   const event: CampaignEvent = {
     id: options.eventId ?? crypto.randomUUID(),
@@ -87,10 +86,11 @@ export function addRelationshipToCampaign(
     payload: {
       relationshipId: relationship.id,
       relationshipType: relationship.type,
+      predicateId: relationship.predicateId,
+      predicateLabel: predicate.directLabel,
       sourceName: source.name,
       targetName: target.name,
       directed: relationship.directed,
-      visibility: relationship.visibility,
     },
   }
 

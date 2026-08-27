@@ -17,6 +17,7 @@ function campaignWithState() {
   const created = addEntityToCampaign(createCampaign({ name: 'Правила' }), { type: 'npc', name: 'Серёга' }, {
     entityId: 'entity-1', eventId: 'entity-event', now: new Date('2026-08-20T10:00:00.000Z'),
   }).campaign
+  created.entities[0] = { ...created.entities[0], status: 'draft' }
   return setEntityStateInCampaign(created, 'entity-1', {
     name: 'Здоровье', category: 'resource', valueType: 'integer', value: 12,
   }, { stateId: 'state-1', eventId: 'state-event', now: new Date('2026-08-20T10:01:00.000Z') }).campaign
@@ -56,6 +57,25 @@ describe('Logic Layer', () => {
 
     const none = { ...created.rule, conditionGroup: { ...created.rule.conditionGroup, operator: 'none' as const } }
     expect(evaluateLogicRule(created.campaign, none).satisfied).toBe(false)
+  })
+
+  it('проверяет существование факта по стабильному predicateId', () => {
+    let campaign = campaignWithState()
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Башня' }, { entityId: 'entity-2' }).campaign
+    campaign = addRelationshipToCampaign(campaign, {
+      sourceId: 'entity-1', targetId: 'entity-2', predicateId: 'builtin:located_in',
+    }, { relationshipId: 'fact-1' }).campaign
+    const created = setLogicRuleInCampaign(campaign, {
+      ...ruleInput(),
+      conditionGroup: { kind: 'group', operator: 'all', children: [{
+        kind: 'condition', entityId: 'entity-1', field: 'relationship', targetEntityId: 'entity-2',
+        predicateId: 'builtin:located_in', operator: 'exists',
+      }] },
+    }, { ruleId: 'fact-rule', conditionIds: ['fact-condition'] })
+
+    expect(created.rule.conditionGroup.children[0]).toMatchObject({ predicateId: 'builtin:located_in' })
+    expect(evaluateLogicRule(created.campaign, created.rule).conditionResults[0]).toMatchObject({ passed: true })
+    expect(evaluateLogicRule(created.campaign, created.rule).conditionResults[0].explanation.toLocaleLowerCase('ru-RU')).toContain('находится в')
   })
 
   it('применяет несколько эффектов атомарно только после отдельного вызова', () => {
@@ -146,5 +166,65 @@ describe('Logic Layer', () => {
       ] },
     }, { ruleId: 'context-rule' })
     expect(evaluateLogicRule(result.campaign, result.rule).satisfied).toBe(true)
+  })
+
+  it('показывает и атомарно создаёт новый факт без отдельного события связи', () => {
+    let campaign = campaignWithState()
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Башня' }, { entityId: 'tower' }).campaign
+    const created = setLogicRuleInCampaign(campaign, {
+      ...ruleInput(),
+      effects: [{ entityId: 'entity-1', type: 'create_fact', targetEntityId: 'tower', predicateId: 'builtin:located_in', description: 'После подтверждения' }],
+    }, { ruleId: 'fact-effect-rule', effectIds: ['fact-effect'] }).campaign
+
+    const preview = previewLogicRule(created, created.logicRules.at(-1)!)
+    expect(preview.effects[0]).toMatchObject({ changed: true, targetEntityId: 'tower' })
+    expect(preview.effects[0].explanation).toContain('Создать факт')
+    expect(created.relationships).toEqual([])
+
+    const applied = applyLogicRuleInCampaign(created, 'fact-effect-rule', { eventId: 'apply-fact', relationshipIds: ['created-fact'] })
+    expect(applied.campaign.relationships).toEqual([expect.objectContaining({ id: 'created-fact', sourceId: 'entity-1', targetId: 'tower', predicateId: 'builtin:located_in' })])
+    expect(applied.campaign.eventLog.at(-1)).toMatchObject({ id: 'apply-fact', type: 'logic.rule.applied', relatedEntityIds: expect.arrayContaining(['entity-1', 'tower']) })
+    expect(applied.campaign.eventLog.some((event) => event.type === 'relationship.created')).toBe(false)
+    expect(applyLogicRuleInCampaign(applied.campaign, 'fact-effect-rule').changed).toBe(false)
+  })
+
+  it('сравнивает и подтверждённо изменяет типизированное пользовательское поле', () => {
+    const base = campaignWithState()
+    const campaign = {
+      ...base,
+      customFieldDefinitions: [{ id: 'trust', name: 'Доверие', type: 'number' as const }],
+      entities: base.entities.map((entity) => ({ ...entity, customFields: { trust: 3 } })),
+    }
+    const created = setLogicRuleInCampaign(campaign, {
+      name: 'Доверие растёт', enabled: true,
+      conditionGroup: { kind: 'group', operator: 'all', children: [{
+        kind: 'condition', entityId: 'entity-1', field: 'custom_field', customFieldId: 'trust', operator: 'greater_or_equal', value: 3,
+      }] },
+      effects: [{ entityId: 'entity-1', type: 'set_custom_field', customFieldId: 'trust', value: 5 }],
+      executionMode: 'require_confirmation', trigger: { type: 'manual', delayMinutes: 0, repeat: 'rearm' },
+    }, { ruleId: 'custom-field-rule', conditionIds: ['custom-condition'], effectIds: ['custom-effect'] })
+
+    expect(evaluateLogicRule(created.campaign, created.rule).conditionResults[0]).toMatchObject({ passed: true, actual: 3 })
+    expect(previewLogicRule(created.campaign, created.rule).effects[0]).toMatchObject({ changed: true, type: 'set_custom_field' })
+    expect(created.campaign.entities[0].customFields.trust).toBe(3)
+
+    const applied = applyLogicRuleInCampaign(created.campaign, created.rule.id, { eventId: 'apply-custom-field' })
+    expect(applied.campaign.entities[0].customFields.trust).toBe(5)
+    expect(applied.event?.payload.changes).toEqual([expect.objectContaining({ field: 'custom_field', customFieldId: 'trust', before: 3, after: 5 })])
+  })
+
+  it('проверяет тип и целостность ссылочного пользовательского поля', () => {
+    let base = campaignWithState()
+    base = addEntityToCampaign(base, { type: 'location', name: 'Башня' }, { entityId: 'tower' }).campaign
+    const campaign = { ...base, customFieldDefinitions: [{ id: 'home', name: 'Дом', type: 'entity_reference' as const }] }
+    const valid = setLogicRuleInCampaign(campaign, {
+      ...ruleInput(),
+      conditionGroup: { kind: 'group', operator: 'all', children: [{ kind: 'condition', entityId: 'entity-1', field: 'custom_field', customFieldId: 'home', operator: 'not_exists' }] },
+      effects: [{ entityId: 'entity-1', type: 'set_custom_field', customFieldId: 'home', value: 'tower' }],
+    }, { ruleId: 'reference-rule' })
+    expect(evaluateLogicRule(valid.campaign, valid.rule).satisfied).toBe(true)
+    expect(() => setLogicRuleInCampaign(campaign, {
+      ...ruleInput(), effects: [{ entityId: 'entity-1', type: 'set_custom_field', customFieldId: 'home', value: 'missing' }],
+    })).toThrow('не найдена')
   })
 })

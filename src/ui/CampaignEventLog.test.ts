@@ -44,4 +44,16 @@ describe('describeCampaignEvent', () => {
       title: 'Событие сессии', detail: 'Партия вошла в маяк.',
     })
   })
+
+  it('показывает создание шаблона карточки', () => {
+    expect(describeCampaignEvent(event('entity.template.created', { templateName: 'Разведчик' }))).toEqual({
+      title: 'Шаблон карточки создан', detail: 'Разведчик',
+    })
+  })
+
+  it('отдельно описывает Undo без сокрытия исходного события', () => {
+    expect(describeCampaignEvent(event('history.undo', { targetEventId: 'fact-1', targetEventType: 'relationship.created' }))).toEqual({
+      title: 'Действие отменено', detail: 'Исходное действие: создание факта. История сохранена без удаления записей.',
+    })
+  })
 })

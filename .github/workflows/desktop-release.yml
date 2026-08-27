@@ -20,8 +20,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -31,6 +29,19 @@ jobs:
         run: npm ci
       - name: Проверить проект
         run: npm run check
+      - name: Проверить согласованность версии и тега
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json -AsHashtable)['version']
+          $lockVersion = (Get-Content package-lock.json -Raw | ConvertFrom-Json -AsHashtable)['version']
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json -AsHashtable)['version']
+          $cargoContent = Get-Content src-tauri/Cargo.toml -Raw
+          $cargoVersion = [regex]::Match($cargoContent, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"').Groups[1].Value
+          $expectedTag = "v$packageVersion"
+          if ($env:RELEASE_TAG -ne $expectedTag) { throw "Тег $env:RELEASE_TAG не совпадает с версией $packageVersion ($expectedTag)." }
+          if ($lockVersion -ne $packageVersion -or $tauriVersion -ne $packageVersion -or $cargoVersion -ne $packageVersion) { throw "Версии package.json, package-lock.json, tauri.conf.json и Cargo.toml должны совпадать." }
       - name: Собрать подписанные файлы черновика релиза
         uses: tauri-apps/tauri-action@v1.0.0
         env:
@@ -40,6 +51,7 @@ jobs:
         with:
           tagName: ${{ inputs.tag }}
           releaseName: ${{ inputs.title }}
+          releaseCommitish: ${{ github.sha }}
           releaseDraft: true
           updaterJsonPreferNsis: true
           uploadUpdaterJson: true

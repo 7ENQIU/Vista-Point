@@ -16,8 +16,8 @@ function entity(
     aliases: [],
     summary: '',
     description: '',
+    dmNotes: '',
     status: 'draft',
-    visibility: 'game_master',
     tags: [],
     characterTags: [],
     customFields: {},
@@ -52,7 +52,7 @@ describe('searchCampaignEntities', () => {
   ]
 
   it.each(['серега', 'Серёга', 'cthtuf', 'Cth`uf'])('находит имя при запросе «%s»', (query) => {
-    const groups = searchCampaignEntities(entities, { query, types: [], status: 'all' })
+    const groups = searchCampaignEntities(entities, { query, types: [] })
     expect(groups.flatMap((group) => group.results).map((result) => result.entity.id)).toEqual(['e1'])
   })
 
@@ -68,15 +68,14 @@ describe('searchCampaignEntities', () => {
     expect(findEntitySearchMatch(entities[0], query)?.field).toBe(field)
   })
 
-  it('применяет тип и статус одновременно и группирует результат', () => {
+  it('применяет фильтр типа и группирует результат', () => {
     const groups = searchCampaignEntities(entities, {
       query: '',
       types: ['npc'],
-      status: 'draft',
     })
 
     expect(groups.map((group) => group.type)).toEqual(['npc'])
-    expect(groups[0].results.map((result) => result.entity.name)).toEqual(['Анна'])
+    expect(groups[0].results.map((result) => result.entity.name)).toEqual(['Анна', 'Серёга'])
   })
 
   it('не возвращает архивные сущности', () => {
@@ -84,25 +83,23 @@ describe('searchCampaignEntities', () => {
     const groups = searchCampaignEntities([...entities, archived], {
       query: '',
       types: [],
-      status: 'all',
     })
 
     expect(groups.flatMap((group) => group.results).some((result) => result.entity.id === 'e4')).toBe(false)
   })
 
-  it('находит сущность по связанному знанию', () => {
-    const groups = searchCampaignEntities(entities, {
-      query: 'тайный проход',
-      types: [],
-      status: 'all',
-      knowledge: [{
-        id: 'k1', campaignId: 'c1', subjectType: 'party', content: 'Здесь есть тайный проход.',
-        status: 'known', confidence: 80, truth: 'true', source: 'Карта',
-        relatedEntityIds: ['e2'], createdAt: '2026-08-20T00:00:00.000Z',
-        updatedAt: '2026-08-20T00:00:00.000Z',
-      }],
+  it('ищет по названию типизированного поля и имени сущности по ссылке', () => {
+    const linked = entity('linked', 'location', 'Старая башня', { status: 'active' })
+    const source = entity('source', 'npc', 'Хранитель', {
+      status: 'active',
+      customFields: { home: 'linked' },
     })
+    const definitions = [{ id: 'home', name: 'Дом', type: 'entity_reference' as const }]
 
-    expect(groups[0].results[0]).toMatchObject({ entity: { id: 'e2' }, match: { field: 'knowledge' } })
+    expect(searchCampaignEntities([source, linked], { query: 'дом', types: [] }, definitions)
+      .flatMap((group) => group.results).map((result) => result.entity.id)).toContain('source')
+    expect(searchCampaignEntities([source, linked], { query: 'старая башня', types: [] }, definitions)
+      .flatMap((group) => group.results).map((result) => result.entity.id)).toContain('source')
   })
+
 })

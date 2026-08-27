@@ -11,57 +11,57 @@ import {
   archiveAndSaveRelationship,
 } from '../application/campaigns/archiveAndSaveCampaignItem'
 import { createAndSaveCampaign } from '../application/campaigns/createAndSaveCampaign'
+import { createLogicTestCampaign, LOGIC_TEST_CAMPAIGN_ID } from '../application/campaigns/createLogicTestCampaign'
 import { createAndSaveEntity } from '../application/campaigns/createAndSaveEntity'
 import { createAndSaveRelationships } from '../application/campaigns/createAndSaveRelationship'
-import { buildEntityContextPaths, selectImmediateHierarchyRelationships } from '../application/campaigns/buildEntityContext'
+import { createAndSaveFact, type CreateFactInput } from '../application/campaigns/createAndSaveFact'
+import { archiveAndSavePredicate, updateAndSavePredicate } from '../application/campaigns/savePredicateChanges'
+import { applyAndSaveHistoryAction } from '../application/campaigns/saveHistoryAction'
+import { saveHotbarSlot } from '../application/campaigns/saveHotbarSlot'
+import { createAndSaveEntityTemplate, removeAndSaveEntityTemplate } from '../application/campaigns/saveEntityTemplate'
+import { createAndSaveCustomEntityType, removeAndSaveCustomEntityType, renameAndSaveCustomEntityType } from '../application/campaigns/saveCustomEntityType'
+import { createAndSaveGraphView, removeAndSaveGraphView, renameAndSaveGraphView } from '../application/campaigns/saveGraphView'
+import { applyAndSaveLogicRule, removeAndSaveLogicRule, setAndSaveLogicRule } from '../application/campaigns/saveLogicRule'
+import { selectImmediateHierarchyRelationships } from '../application/campaigns/buildEntityContext'
 import { importCampaignFile } from '../application/campaigns/importCampaignFile'
 import {
   removeAndSaveEntityState,
   setAndSaveEntityState,
 } from '../application/campaigns/saveEntityState'
-import { removeAndSaveKnowledge, setAndSaveKnowledge } from '../application/campaigns/saveKnowledge'
-import { applyAndSaveLogicRule, removeAndSaveLogicRule, setAndSaveLogicRule } from '../application/campaigns/saveLogicRule'
-import { applyAndSaveLogicActivation, dismissAndSaveLogicActivation, refreshAndSaveLogicTriggers } from '../application/campaigns/saveLogicTrigger'
-import { addAndSaveSessionEvent, completeAndSaveSession, startAndSaveSession, updateAndSaveSessionContext } from '../application/campaigns/saveSession'
-import { resolveAndSaveSceneCheck } from '../application/campaigns/saveSceneCheck'
-import { advanceAndSaveEncounterTurn, completeAndSaveEncounter, setAndSaveEncounterParticipantHp, startAndSaveEncounter, updateAndSaveEncounterParticipant } from '../application/campaigns/saveEncounter'
-import { processAndSaveImprovisedEntity, quickCreateAndSaveEntity } from '../application/campaigns/saveImprovisation'
-import { applyAndSaveWorldTime, cancelAndSaveScheduledWorldEvent, createAndSaveScheduledWorldEvent, setAndSaveCampaignCalendar } from '../application/campaigns/saveWorldClock'
 import { updateAndSaveEntity } from '../application/campaigns/updateAndSaveEntity'
 import type { CampaignBackup, CampaignRepository } from '../application/ports/CampaignRepository'
 import { parseCampaignFile } from '../domain/campaign/campaignFile'
-import { formatCampaignDateTime } from '../domain/campaign/calendar'
+import type { UpdatePredicateInput } from '../domain/campaign/managePredicate'
+import type { SetLogicRuleInput } from '../domain/campaign/logicRules'
 import {
   ENTITY_TYPES,
   RELATIONSHIP_TYPES,
   type Campaign,
   type CampaignEntity,
   type EntityType,
+  type FactHotbarPreset,
+  type SavedGraphView,
   type RelationshipType,
-  type Visibility,
 } from '../domain/campaign/types'
 import { IndexedDbCampaignRepository } from '../infrastructure/storage/IndexedDbCampaignRepository'
 import { ru } from '../shared/i18n/ru'
 import { CampaignGraph } from './CampaignGraph'
+import { CustomEntityTypeManager } from './CustomEntityTypeManager'
+import { LogicCanvas } from './LogicCanvas'
 import { DesktopUpdateCard } from './DesktopUpdateCard'
 import { ThemeToggle } from './ThemeToggle'
 import { CampaignEventLog } from './CampaignEventLog'
 import { downloadCampaign } from './downloadCampaign'
 import { EntityEditor } from './EntityEditor'
-import { EntityKnowledgeEditor } from './EntityKnowledgeEditor'
+import { EntityFullScreenCard, type EntityFullScreenCardView } from './EntityFullScreenCard'
+import { buildEntityHistoryEntries, EntityHistoryPanel } from './EntityHistoryPanel'
+import { buildEntityRelationshipGroups, EntityRelationshipsPanel } from './EntityRelationshipsPanel'
 import { EntityStateEditor } from './EntityStateEditor'
 import { groupRelationshipSources } from './groupRelationshipSources'
-import { LogicRuleBuilder } from './LogicRuleBuilder'
-import { LogicActivationQueue } from './LogicActivationQueue'
-import { SessionMode } from './SessionMode'
-import { WorldClockPanel } from './WorldClockPanel'
-import { CAMPAIGN_WORKSPACE_VIEWS, resolveInitialCampaignWorkspaceView, type CampaignWorkspaceView } from './campaignWorkspace'
-import { EncounterPanel } from './EncounterPanel'
-import { ImprovisationPanel } from './ImprovisationPanel'
-import {
-  searchCampaignEntities,
-  type SearchableEntityStatus,
-} from './searchCampaignEntities'
+import { CAMPAIGN_WORKSPACE_VIEWS, resolveInitialCampaignCanvasMode, resolveInitialCampaignWorkspaceView, toggleCampaignCanvasMode, type CampaignCanvasMode, type CampaignWorkspaceView } from './campaignWorkspace'
+import { searchCampaignEntities } from './searchCampaignEntities'
+import { entityTypeLabel } from './entityTypeLabels'
+import { SavedGraphViews } from './SavedGraphViews'
 
 function BrandHeader({ campaignName }: { campaignName?: string }) {
   return (
@@ -91,45 +91,50 @@ interface CampaignOverviewProps {
   onCampaignChanged: (campaign: Campaign) => void
 }
 
-type EntityPanelView = 'details' | 'state' | 'knowledge'
+type EntityPanelView = EntityFullScreenCardView
 
 const workspaceLabels: Record<CampaignWorkspaceView, { label: string; hint: string }> = {
-  session: { label: 'Сессия', hint: 'Сцена и проведение' },
-  campaign: { label: 'Кампания', hint: 'Сущности и связи' },
-  graph: { label: 'Граф', hint: 'Структура мира' },
-  logic: { label: 'Логика', hint: 'Условия и последствия' },
+  session: { label: 'Сессия', hint: 'Раздел в разработке' },
+  graph: { label: 'Канвас', hint: 'Знания и логика' },
   history: { label: 'История', hint: 'Журнал изменений' },
+  details: { label: 'Подробнее', hint: 'Библиотека и настройки' },
 }
 
 function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: CampaignOverviewProps) {
   const workspaceStorageKey = `vista-point:campaign-workspace:${campaign.id}`
+  const canvasModeStorageKey = `vista-point:canvas-mode:${campaign.id}`
   const [workspaceView, setWorkspaceView] = useState<CampaignWorkspaceView>(() => {
     let stored: string | null = null
     try { stored = window.localStorage.getItem(workspaceStorageKey) } catch { /* локальная настройка недоступна */ }
     return resolveInitialCampaignWorkspaceView(campaign.activeSessionId, stored)
+  })
+  const [canvasMode, setCanvasMode] = useState<CampaignCanvasMode>(() => {
+    try { return resolveInitialCampaignCanvasMode(window.localStorage.getItem(canvasModeStorageKey)) } catch { return 'knowledge' }
   })
   const [backups, setBackups] = useState<CampaignBackup[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [isRestoring, setIsRestoring] = useState(false)
   const [entityType, setEntityType] = useState<EntityType>('location')
+  const [customEntityTypeId, setCustomEntityTypeId] = useState('')
+  const [entityTemplateId, setEntityTemplateId] = useState('')
   const [entityName, setEntityName] = useState('')
   const [entitySummary, setEntitySummary] = useState('')
-  const [entityLocationLevel, setEntityLocationLevel] = useState(1)
   const [entityCharacterTags, setEntityCharacterTags] = useState('')
   const [isCreatingEntity, setIsCreatingEntity] = useState(false)
+  const [isGraphCreateOpen, setIsGraphCreateOpen] = useState(false)
   const [editingEntityId, setEditingEntityId] = useState('')
+  const [isEntityEditorDirty, setIsEntityEditorDirty] = useState(false)
   const [entityPanelView, setEntityPanelView] = useState<EntityPanelView>('details')
   const [isUpdatingEntity, setIsUpdatingEntity] = useState(false)
+  const [isSavingEntityTemplate, setIsSavingEntityTemplate] = useState(false)
+  const [isSavingCustomEntityType, setIsSavingCustomEntityType] = useState(false)
+  const [isSavingGraphView, setIsSavingGraphView] = useState(false)
   const [isSavingEntityState, setIsSavingEntityState] = useState(false)
-  const [isSavingKnowledge, setIsSavingKnowledge] = useState(false)
-  const [isSavingLogic, setIsSavingLogic] = useState(false)
-  const [isSavingSession, setIsSavingSession] = useState(false)
-  const [isSavingWorldClock, setIsSavingWorldClock] = useState(false)
-  const [isSavingRuntime, setIsSavingRuntime] = useState(false)
   const [campaignSearch, setCampaignSearch] = useState('')
   const [entityTypeFilters, setEntityTypeFilters] = useState<EntityType[]>([])
-  const [entityStatusFilter, setEntityStatusFilter] = useState<'all' | SearchableEntityStatus>('all')
+  const [customEntityTypeFilters, setCustomEntityTypeFilters] = useState<string[]>([])
+  const savedGraphViews = campaign.savedGraphViews ?? []
   const campaignSearchInput = useRef<HTMLInputElement>(null)
   const [relationshipSourceIds, setRelationshipSourceIds] = useState<string[]>([])
   const [relationshipSourceSearch, setRelationshipSourceSearch] = useState('')
@@ -137,7 +142,6 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   const [relationshipType, setRelationshipType] = useState<RelationshipType>('located_in')
   const [relationshipDescription, setRelationshipDescription] = useState('')
   const [relationshipDirected, setRelationshipDirected] = useState(true)
-  const [relationshipVisibility, setRelationshipVisibility] = useState<Visibility>('game_master')
   const [isCreatingRelationship, setIsCreatingRelationship] = useState(false)
   const [archivingEntityId, setArchivingEntityId] = useState('')
   const [archivingRelationshipId, setArchivingRelationshipId] = useState('')
@@ -147,7 +151,6 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     relationship.status !== 'archived' &&
     activeEntityIds.has(relationship.sourceId) &&
     activeEntityIds.has(relationship.targetId)))
-  const entityContextPaths = useMemo(() => buildEntityContextPaths(campaign), [campaign])
   const availableSourceEntities = activeEntities.filter(
     (entity) => entity.id !== relationshipTargetId,
   )
@@ -162,41 +165,88 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     return entity ? [entity] : []
   })
   const editingEntity = activeEntities.find((entity) => entity.id === editingEntityId)
-  const editingEntityKnowledge = editingEntity
-    ? campaign.knowledge.filter((knowledge) => knowledge.relatedEntityIds.includes(editingEntity.id))
-    : []
+  const editingEntityRelationshipGroups = editingEntity
+    ? buildEntityRelationshipGroups(campaign, editingEntity.id)
+    : undefined
+  const editingEntityRelationshipCount = editingEntityRelationshipGroups
+    ? editingEntityRelationshipGroups.outgoing.length + editingEntityRelationshipGroups.incoming.length + editingEntityRelationshipGroups.mutual.length
+    : 0
+  const editingEntityHistoryCount = editingEntity
+    ? buildEntityHistoryEntries(campaign, editingEntity.id).length
+    : 0
   const entitySearchGroups = useMemo(() => searchCampaignEntities(campaign.entities, {
     query: campaignSearch,
     types: entityTypeFilters,
-    status: entityStatusFilter,
-    knowledge: campaign.knowledge,
-  }), [campaign.entities, campaign.knowledge, campaignSearch, entityStatusFilter, entityTypeFilters])
+    customTypeIds: customEntityTypeFilters,
+  }, campaign.customFieldDefinitions), [campaign.customFieldDefinitions, campaign.entities, campaignSearch, customEntityTypeFilters, entityTypeFilters])
   const visibleEntities = useMemo(
     () => entitySearchGroups.flatMap((group) => group.results.map((result) => result.entity)),
     [entitySearchGroups],
   )
   const visibleEntityIds = useMemo(() => visibleEntities.map((entity) => entity.id), [visibleEntities])
   const isEntitySearchFiltered = Boolean(
-    campaignSearch.trim() || entityTypeFilters.length > 0 || entityStatusFilter !== 'all',
+    campaignSearch.trim() || entityTypeFilters.length > 0 || customEntityTypeFilters.length > 0,
   )
   const counters = [
     [ru.entities, activeEntities.length],
     [ru.relationships, activeRelationships.length],
-    [ru.knowledge, campaign.knowledge.length],
-    [ru.logicRules, campaign.logicRules.length],
-    [ru.sessions, campaign.sessions.length],
     [ru.events, campaign.eventLog.length],
   ] as const
 
   function openEntityPanel(entityId: string, view: EntityPanelView) {
-    setWorkspaceView('campaign')
+    if (isEntityEditorDirty && (editingEntityId !== entityId || entityPanelView !== view) && !window.confirm('Открыть другой раздел карточки? Несохранённые изменения будут потеряны.')) return
+    setWorkspaceView('details')
+    setIsGraphCreateOpen(false)
+    setIsEntityEditorDirty(false)
     setEditingEntityId(entityId)
     setEntityPanelView(view)
   }
 
+  function openGraphEntityPanel(entityId: string) {
+    if (isEntityEditorDirty && editingEntityId !== entityId && !window.confirm('Открыть другую карточку? Несохранённые изменения будут потеряны.')) return
+    setIsGraphCreateOpen(false)
+    setIsEntityEditorDirty(false)
+    setEditingEntityId(entityId)
+    setEntityPanelView('details')
+  }
+
+  function closeEntityPanel() {
+    if (isEntityEditorDirty && !window.confirm('Закрыть карточку? Несохранённые изменения будут потеряны.')) return
+    setEditingEntityId('')
+    setIsEntityEditorDirty(false)
+  }
+
+  function selectEntityPanelView(view: EntityPanelView) {
+    if (view === entityPanelView) return
+    if (isEntityEditorDirty && !window.confirm('Открыть другой раздел карточки? Несохранённые изменения будут потеряны.')) return
+    setIsEntityEditorDirty(false)
+    setEntityPanelView(view)
+  }
+
+  function openGraphEntityCreate() {
+    if (isEntityEditorDirty && !window.confirm('Создать новую сущность? Несохранённые изменения будут потеряны.')) return
+    setEditingEntityId('')
+    setIsEntityEditorDirty(false)
+    setIsGraphCreateOpen(true)
+  }
+
   function selectWorkspaceView(view: CampaignWorkspaceView) {
+    if (isEntityEditorDirty && view !== workspaceView && !window.confirm('Перейти в другой раздел? Несохранённые изменения карточки будут потеряны.')) return
+    if (view !== workspaceView) {
+      setEditingEntityId('')
+      setIsEntityEditorDirty(false)
+    }
     setWorkspaceView(view)
     window.requestAnimationFrame(() => document.getElementById('campaign-workspace-nav')?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
+  }
+
+  function selectCanvasMode(mode: CampaignCanvasMode) {
+    if (mode === canvasMode) return
+    if (isEntityEditorDirty && !window.confirm('Переключить режим канваса? Несохранённые изменения карточки будут потеряны.')) return
+    setEditingEntityId('')
+    setIsGraphCreateOpen(false)
+    setIsEntityEditorDirty(false)
+    setCanvasMode(mode)
   }
 
   function toggleEntityTypeFilter(type: EntityType) {
@@ -205,16 +255,72 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
       : [...current, type])
   }
 
+  function toggleCustomEntityTypeFilter(typeId: string) {
+    setCustomEntityTypeFilters((current) => current.includes(typeId)
+      ? current.filter((item) => item !== typeId)
+      : [...current, typeId])
+  }
+
   function resetEntitySearch() {
     setCampaignSearch('')
     setEntityTypeFilters([])
-    setEntityStatusFilter('all')
+    setCustomEntityTypeFilters([])
+  }
+
+  function applySavedGraphView(view: SavedGraphView) {
+    setCampaignSearch(view.query)
+    setEntityTypeFilters(view.entityTypes)
+    setCustomEntityTypeFilters(view.customEntityTypeIds.filter((id) => campaign.customEntityTypes.some((type) => type.id === id)))
+    setMessage(`Вид «${view.name}» применён.`)
+  }
+
+  async function handleGraphViewCreate(name: string) {
+    setError('')
+    setMessage('')
+    setIsSavingGraphView(true)
+    try {
+      const result = await createAndSaveGraphView(repository, { ...campaign, savedGraphViews }, { name, query: campaignSearch, entityTypes: entityTypeFilters, customEntityTypeIds: customEntityTypeFilters })
+      await acceptCampaignChange(result.campaign)
+      setMessage(`Вид «${result.view.name}» сохранён.`)
+      return true
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+      return false
+    } finally { setIsSavingGraphView(false) }
+  }
+
+  async function handleGraphViewRename(viewId: string, name: string) {
+    setError('')
+    setMessage('')
+    setIsSavingGraphView(true)
+    try {
+      const result = await renameAndSaveGraphView(repository, { ...campaign, savedGraphViews }, viewId, name)
+      await acceptCampaignChange(result.campaign)
+      setMessage(`Вид «${result.view.name}» переименован.`)
+      return true
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+      return false
+    } finally { setIsSavingGraphView(false) }
+  }
+
+  async function handleGraphViewRemove(viewId: string) {
+    const view = savedGraphViews.find((item) => item.id === viewId)
+    if (!view || !window.confirm(`Удалить сохранённый вид «${view.name}»? Текущая раскладка и сущности не изменятся.`)) return
+    setError('')
+    setMessage('')
+    setIsSavingGraphView(true)
+    try {
+      const result = await removeAndSaveGraphView(repository, { ...campaign, savedGraphViews }, viewId)
+      await acceptCampaignChange(result.campaign)
+      setMessage(`Вид «${result.view.name}» удалён.`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+    } finally { setIsSavingGraphView(false) }
   }
 
   async function acceptCampaignChange(nextCampaign: Campaign) {
-    const refreshed = await refreshAndSaveLogicTriggers(repository, nextCampaign)
-    onCampaignChanged(refreshed.campaign)
-    if (refreshed.automaticLimitReached) setError('Автоматическая цепочка остановлена после 20 шагов. Проверьте правила и ожидающие срабатывания.')
+    onCampaignChanged(nextCampaign)
   }
 
   useEffect(() => {
@@ -226,10 +332,14 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
   }, [workspaceStorageKey, workspaceView])
 
   useEffect(() => {
+    try { window.localStorage.setItem(canvasModeStorageKey, canvasMode) } catch { /* интерфейс продолжает работать без сохранения режима */ }
+  }, [canvasModeStorageKey, canvasMode])
+
+  useEffect(() => {
     function handleSearchShortcut(event: globalThis.KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'k') {
         event.preventDefault()
-        setWorkspaceView('campaign')
+        setWorkspaceView('details')
         window.requestAnimationFrame(() => { campaignSearchInput.current?.focus(); campaignSearchInput.current?.select() })
       } else if (event.key === 'Escape' && document.activeElement === campaignSearchInput.current) {
         setCampaignSearch('')
@@ -260,29 +370,88 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     }
   }
 
-  async function handleEntitySubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function createEntity() {
     setError('')
     setMessage('')
     setIsCreatingEntity(true)
     try {
       const result = await createAndSaveEntity(repository, campaign, {
         type: entityType,
+        customTypeId: customEntityTypeId || undefined,
         name: entityName,
         summary: entitySummary,
-        locationLevel: entityType === 'location' ? entityLocationLevel : undefined,
         characterTags: entityType === 'npc' ? entityCharacterTags.split(',') : undefined,
+        templateId: entityTemplateId || undefined,
       })
       setEntityName('')
       setEntitySummary('')
       setEntityCharacterTags('')
+      setEntityTemplateId('')
+      setCustomEntityTypeId('')
       await acceptCampaignChange(result.campaign)
+      setIsGraphCreateOpen(false)
       setMessage(ru.entityCreated)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
     } finally {
       setIsCreatingEntity(false)
     }
+  }
+
+  function selectEntityTemplate(templateId: string) {
+    setEntityTemplateId(templateId)
+    const template = campaign.entityTemplates.find((item) => item.id === templateId)
+    if (!template) return
+    setEntityType(template.entityType)
+    setCustomEntityTypeId(template.customTypeId ?? '')
+    setEntitySummary(template.summary)
+    setEntityCharacterTags(template.characterTags.join(', '))
+  }
+
+  function selectEntityType(value: string) {
+    setEntityTemplateId('')
+    if (value.startsWith('custom:')) {
+      const customType = campaign.customEntityTypes.find((item) => item.id === value.slice(7))
+      if (!customType) return
+      setEntityType(customType.baseType)
+      setCustomEntityTypeId(customType.id)
+      return
+    }
+    setEntityType(value.slice(5) as EntityType)
+    setCustomEntityTypeId('')
+  }
+
+  async function handleCustomEntityTypeCreate(input: { name: string; baseType: EntityType }) {
+    setIsSavingCustomEntityType(true)
+    try { const result = await createAndSaveCustomEntityType(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(`Тип «${result.customType.name}» создан.`) }
+    finally { setIsSavingCustomEntityType(false) }
+  }
+
+  async function handleCustomEntityTypeRename(typeId: string, name: string) {
+    setIsSavingCustomEntityType(true)
+    try { const result = await renameAndSaveCustomEntityType(repository, campaign, typeId, name); await acceptCampaignChange(result.campaign); setMessage(`Тип «${result.customType.name}» сохранён.`) }
+    finally { setIsSavingCustomEntityType(false) }
+  }
+
+  async function handleCustomEntityTypeRemove(typeId: string) {
+    setIsSavingCustomEntityType(true)
+    try {
+      const result = await removeAndSaveCustomEntityType(repository, campaign, typeId)
+      await acceptCampaignChange(result.campaign)
+      setCustomEntityTypeFilters((current) => current.filter((item) => item !== typeId))
+      if (customEntityTypeId === typeId) setCustomEntityTypeId('')
+      setMessage(`Тип «${result.customType.name}» удалён.`)
+    } finally { setIsSavingCustomEntityType(false) }
+  }
+
+  async function handleEntitySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await createEntity()
+  }
+
+  async function handleGraphEntitySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await createEntity()
   }
 
   async function handleRelationshipSubmit(event: FormEvent<HTMLFormElement>) {
@@ -300,7 +469,6 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
           type: relationshipType,
           directed: relationshipDirected,
           description: relationshipDescription,
-          visibility: relationshipVisibility,
         })),
       )
       setRelationshipSourceIds([])
@@ -320,6 +488,80 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     }
   }
 
+  async function handleGraphFactCreate(input: CreateFactInput) {
+    setError('')
+    setMessage('')
+    const result = await createAndSaveFact(repository, campaign, input)
+    await acceptCampaignChange(result.campaign)
+    setMessage('Факт создан на графе и добавлен в историю.')
+  }
+
+  async function handleHotbarSlotUpdate(slot: number, preset: FactHotbarPreset | undefined) {
+    setError('')
+    setMessage('')
+    const updated = await saveHotbarSlot(repository, campaign, slot, preset)
+    await acceptCampaignChange(updated)
+    setMessage(preset ? `Слот ${slot === 10 ? 0 : slot} настроен.` : `Слот ${slot === 10 ? 0 : slot} очищен.`)
+  }
+
+  async function handlePredicateUpdate(predicateId: string, input: UpdatePredicateInput) {
+    setError('')
+    setMessage('')
+    const result = await updateAndSavePredicate(repository, campaign, predicateId, input)
+    if (result.changed) await acceptCampaignChange(result.campaign)
+    setMessage(result.changed ? 'Предикат обновлён.' : 'Предикат не изменился.')
+  }
+
+  async function handlePredicateArchive(predicateId: string) {
+    setError('')
+    setMessage('')
+    const result = await archiveAndSavePredicate(repository, campaign, predicateId)
+    await acceptCampaignChange(result.campaign)
+    setMessage('Предикат перенесён в архив.')
+  }
+
+  async function handleHistoryAction(direction: 'undo' | 'redo') {
+    setError('')
+    setMessage('')
+    try {
+      const result = await applyAndSaveHistoryAction(repository, campaign, direction)
+      await acceptCampaignChange(result.campaign)
+      setMessage(direction === 'undo' ? 'Последнее действие отменено.' : 'Действие повторено.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+      throw caught
+    }
+  }
+
+  async function handleLogicRuleSave(input: SetLogicRuleInput) {
+    setError('')
+    setMessage('')
+    const result = await setAndSaveLogicRule(repository, campaign, input)
+    if (result.changed) await acceptCampaignChange(result.campaign)
+    setMessage(result.changed ? 'Логическое правило сохранено.' : 'Правило не изменилось.')
+  }
+
+  async function handleLogicRuleRemove(ruleId: string) {
+    setError('')
+    setMessage('')
+    const result = await removeAndSaveLogicRule(repository, campaign, ruleId)
+    await acceptCampaignChange(result.campaign)
+    setMessage('Логическое правило удалено. Запись сохранена в истории.')
+  }
+
+  async function handleLogicRuleApply(ruleId: string) {
+    setError('')
+    setMessage('')
+    try {
+      const result = await applyAndSaveLogicRule(repository, campaign, ruleId)
+      if (result.changed) await acceptCampaignChange(result.campaign)
+      setMessage(result.changed ? 'Результаты правила применены. Изменение можно отменить в истории.' : 'Правило проверено повторно: изменения больше не требуются.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+      throw caught
+    }
+  }
+
   async function handleEntityUpdate(
     entity: CampaignEntity,
     input: Parameters<typeof updateAndSaveEntity>[3],
@@ -331,11 +573,47 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
       const result = await updateAndSaveEntity(repository, campaign, entity.id, input)
       if (result.changed) await acceptCampaignChange(result.campaign)
       setEditingEntityId('')
+      setIsEntityEditorDirty(false)
       setMessage(result.changed ? ru.entityUpdated : ru.entityUnchanged)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : ru.storageError)
     } finally {
       setIsUpdatingEntity(false)
+    }
+  }
+
+  async function handleEntityTemplateCreate(entity: CampaignEntity, name: string) {
+    setError('')
+    setMessage('')
+    setIsSavingEntityTemplate(true)
+    try {
+      const result = await createAndSaveEntityTemplate(repository, campaign, entity.id, name)
+      await acceptCampaignChange(result.campaign)
+      setMessage(`Шаблон «${result.template.name}» создан.`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+      throw caught
+    } finally {
+      setIsSavingEntityTemplate(false)
+    }
+  }
+
+  async function handleEntityTemplateRemove(templateId: string) {
+    setError('')
+    setMessage('')
+    setIsSavingEntityTemplate(true)
+    try {
+      const result = await removeAndSaveEntityTemplate(repository, campaign, templateId)
+      await acceptCampaignChange(result.campaign)
+      if (entityTemplateId === templateId) {
+        setEntityTemplateId('')
+      }
+      setMessage(`Шаблон «${result.template.name}» удалён.`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+      throw caught
+    } finally {
+      setIsSavingEntityTemplate(false)
     }
   }
 
@@ -374,170 +652,8 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     }
   }
 
-  async function handleKnowledgeSave(input: Parameters<typeof setAndSaveKnowledge>[2]) {
-    setError('')
-    setMessage('')
-    setIsSavingKnowledge(true)
-    try {
-      const result = await setAndSaveKnowledge(repository, campaign, input)
-      if (result.changed) await acceptCampaignChange(result.campaign)
-      setMessage(result.changed ? ru.knowledgeSaved : ru.knowledgeUnchanged)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : ru.storageError)
-      throw caught
-    } finally {
-      setIsSavingKnowledge(false)
-    }
-  }
-
-  async function handleKnowledgeRemove(knowledgeId: string) {
-    setError('')
-    setMessage('')
-    setIsSavingKnowledge(true)
-    try {
-      const result = await removeAndSaveKnowledge(repository, campaign, knowledgeId)
-      await acceptCampaignChange(result.campaign)
-      setMessage(ru.knowledgeRemoved)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : ru.storageError)
-      throw caught
-    } finally {
-      setIsSavingKnowledge(false)
-    }
-  }
-
-  async function handleLogicRuleSave(input: Parameters<typeof setAndSaveLogicRule>[2]) {
-    setError(''); setMessage(''); setIsSavingLogic(true)
-    try {
-      const result = await setAndSaveLogicRule(repository, campaign, input)
-      if (result.changed) await acceptCampaignChange(result.campaign)
-      setMessage(result.changed ? ru.logicRuleSaved : ru.logicRuleUnchanged)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : ru.storageError)
-      throw caught
-    } finally { setIsSavingLogic(false) }
-  }
-
-  async function handleLogicRuleRemove(ruleId: string) {
-    setError(''); setMessage(''); setIsSavingLogic(true)
-    try {
-      const result = await removeAndSaveLogicRule(repository, campaign, ruleId)
-      await acceptCampaignChange(result.campaign); setMessage(ru.logicRuleRemoved)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : ru.storageError)
-      throw caught
-    } finally { setIsSavingLogic(false) }
-  }
-
-  async function handleLogicRuleApply(ruleId: string) {
-    setError(''); setMessage(''); setIsSavingLogic(true)
-    try {
-      const result = await applyAndSaveLogicRule(repository, campaign, ruleId)
-      if (result.changed) await acceptCampaignChange(result.campaign)
-      setMessage(result.changed ? ru.logicRuleApplied : ru.logicRuleNoChanges)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : ru.storageError)
-      throw caught
-    } finally { setIsSavingLogic(false) }
-  }
-
-  async function handleLogicActivationApply(activationId: string) {
-    setError(''); setMessage(''); setIsSavingLogic(true)
-    try { const result = await applyAndSaveLogicActivation(repository, campaign, activationId); await acceptCampaignChange(result.campaign); setMessage(ru.logicActivationApplied) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingLogic(false) }
-  }
-
-  async function handleLogicActivationDismiss(activationId: string) {
-    setError(''); setMessage(''); setIsSavingLogic(true)
-    try { const result = await dismissAndSaveLogicActivation(repository, campaign, activationId); await acceptCampaignChange(result.campaign); setMessage(ru.logicActivationDismissed) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingLogic(false) }
-  }
-
-  async function handleSessionStart(input: Parameters<typeof startAndSaveSession>[2]) {
-    setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await startAndSaveSession(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.sessionStarted) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingSession(false) }
-  }
-
-  async function handleSessionContext(input: Parameters<typeof updateAndSaveSessionContext>[2]) {
-    setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await updateAndSaveSessionContext(repository, campaign, input); if (result.changed) await acceptCampaignChange(result.campaign); setMessage(result.changed ? ru.sessionContextSaved : ru.sessionContextUnchanged) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingSession(false) }
-  }
-
-  async function handleSessionEvent(input: Parameters<typeof addAndSaveSessionEvent>[2]) {
-    setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await addAndSaveSessionEvent(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.sessionEventSaved) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingSession(false) }
-  }
-
-  async function handleSessionComplete(summary: string) {
-    setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await completeAndSaveSession(repository, campaign, summary); await acceptCampaignChange(result.campaign); setMessage(ru.sessionCompleted) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingSession(false) }
-  }
-
-  async function handleSceneCheck(input: Parameters<typeof resolveAndSaveSceneCheck>[2]) {
-    setError(''); setMessage(''); setIsSavingSession(true)
-    try { const result = await resolveAndSaveSceneCheck(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(`${ru.checkSaved}: ${result.total} — ${result.succeeded ? ru.checkSuccess : ru.checkFailure}.`) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingSession(false) }
-  }
-
-  async function handleWorldTime(target: string) {
-    setError(''); setMessage(''); setIsSavingWorldClock(true)
-    try { const result = await applyAndSaveWorldTime(repository, campaign, target); await acceptCampaignChange(result.campaign); setMessage(ru.worldTimeChanged) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingWorldClock(false) }
-  }
-
-  async function handleScheduledEventCreate(input: Parameters<typeof createAndSaveScheduledWorldEvent>[2]) {
-    setError(''); setMessage(''); setIsSavingWorldClock(true)
-    try { const result = await createAndSaveScheduledWorldEvent(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.scheduledEventCreated) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingWorldClock(false) }
-  }
-
-  async function handleScheduledEventCancel(id: string) {
-    setError(''); setMessage(''); setIsSavingWorldClock(true)
-    try { const result = await cancelAndSaveScheduledWorldEvent(repository, campaign, id); await acceptCampaignChange(result.campaign); setMessage(ru.scheduledEventCancelled) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingWorldClock(false) }
-  }
-
-  async function handleCalendar(calendar: Parameters<typeof setAndSaveCampaignCalendar>[2]) {
-    setError(''); setMessage(''); setIsSavingWorldClock(true)
-    try { const result = await setAndSaveCampaignCalendar(repository, campaign, calendar); await acceptCampaignChange(result.campaign); setMessage('Календарь кампании сохранён.') }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingWorldClock(false) }
-  }
-
-  async function handleQuickCreate(input: Parameters<typeof quickCreateAndSaveEntity>[2]) {
-    setError(''); setMessage(''); setIsSavingRuntime(true)
-    try { const result = await quickCreateAndSaveEntity(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.quickEntityCreated) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingRuntime(false) }
-  }
-  async function handleImprovisationProcessed(id: string) {
-    setError(''); setMessage(''); setIsSavingRuntime(true)
-    try { const result = await processAndSaveImprovisedEntity(repository, campaign, id); await acceptCampaignChange(result.campaign); setMessage(ru.improvisationProcessed) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught }
-    finally { setIsSavingRuntime(false) }
-  }
-  async function handleEncounterStart(input: Parameters<typeof startAndSaveEncounter>[2]) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await startAndSaveEncounter(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.encounterStarted) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
-  async function handleEncounterParticipant(input: Parameters<typeof updateAndSaveEncounterParticipant>[2]) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await updateAndSaveEncounterParticipant(repository, campaign, input); await acceptCampaignChange(result.campaign); setMessage(ru.encounterParticipantSaved) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
-  async function handleEncounterHp(participantId: string, hp: number) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await setAndSaveEncounterParticipantHp(repository, campaign, participantId, hp); if (result.changed) await acceptCampaignChange(result.campaign); setMessage(ru.encounterHpSaved) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
-  async function handleEncounterAdvance() { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await advanceAndSaveEncounterTurn(repository, campaign); await acceptCampaignChange(result.campaign) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
-  async function handleEncounterComplete(outcome: string) { setError(''); setMessage(''); setIsSavingRuntime(true); try { const result = await completeAndSaveEncounter(repository, campaign, outcome); await acceptCampaignChange(result.campaign); setMessage(ru.encounterCompleted) } catch (caught) { setError(caught instanceof Error ? caught.message : ru.storageError); throw caught } finally { setIsSavingRuntime(false) } }
-
   async function handleArchiveRelationship(relationshipId: string) {
-    const relationship = activeRelationships.find((item) => item.id === relationshipId)
+    const relationship = campaign.relationships.find((item) => item.id === relationshipId && item.status !== 'archived')
     if (!relationship || !window.confirm(ru.deleteRelationshipConfirm)) return
 
     setError('')
@@ -592,7 +708,10 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
     <div className="app-window">
       <BrandHeader campaignName={campaign.name} />
       <main className="app-main campaign-overview">
-        <button className="text-button" onClick={onBack} type="button">
+        <button className="text-button" onClick={() => {
+          if (isEntityEditorDirty && !window.confirm('Вернуться к списку кампаний? Несохранённые изменения карточки будут потеряны.')) return
+          onBack()
+        }} type="button">
           ← {ru.back}
         </button>
         <section className="campaign-summary">
@@ -649,29 +768,22 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             >
               <strong>{workspaceLabels[view].label}</strong>
               <span>{workspaceLabels[view].hint}</span>
-              {view === 'session' && campaign.activeSessionId && <i aria-label="Есть активная сессия">Активна</i>}
-              {view === 'logic' && campaign.logicActivations.some((item) => item.status === 'pending') && <i>{campaign.logicActivations.filter((item) => item.status === 'pending').length}</i>}
             </button>
           ))}
         </nav>
 
         {workspaceView === 'session' && <section aria-labelledby="campaign-workspace-tab-session" className="campaign-workspace-panel" id="campaign-workspace-panel-session" role="tabpanel">
-          <SessionMode
-            campaign={campaign}
-            isSaving={isSavingSession}
-            onAddEvent={handleSessionEvent}
-            onComplete={handleSessionComplete}
-            onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')}
-            onResolveCheck={handleSceneCheck}
-            onStart={handleSessionStart}
-            onUpdateContext={handleSessionContext}
-          />
-          <WorldClockPanel campaign={campaign} isSaving={isSavingWorldClock} onApplyTime={handleWorldTime} onCancelEvent={handleScheduledEventCancel} onCreateEvent={handleScheduledEventCreate} onSetCalendar={handleCalendar} />
-          <EncounterPanel campaign={campaign} isSaving={isSavingRuntime} onAdvance={handleEncounterAdvance} onComplete={handleEncounterComplete} onSetHp={handleEncounterHp} onStart={handleEncounterStart} onUpdateParticipant={handleEncounterParticipant} />
-          <ImprovisationPanel campaign={campaign} isSaving={isSavingRuntime} onCreate={handleQuickCreate} onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')} onProcessed={handleImprovisationProcessed} />
+          <div className="session-placeholder">
+            <p className="overline">Будущий режим</p>
+            <h2>Сессия</h2>
+            <p>Этот раздел находится в разработке. В будущем здесь появятся инструменты для ведения игровой сессии.</p>
+            <button className="button button-primary" onClick={() => selectWorkspaceView('graph')} type="button">
+              Вернуться к графу знаний
+            </button>
+          </div>
         </section>}
 
-        {workspaceView === 'campaign' && <section aria-labelledby="campaign-workspace-tab-campaign" className="campaign-workspace-panel" id="campaign-workspace-panel-campaign" role="tabpanel">
+        {workspaceView === 'details' && <section aria-labelledby="campaign-workspace-tab-details" className="campaign-workspace-panel" id="campaign-workspace-panel-details" role="tabpanel">
         <section className="metric-grid" aria-label="Состояние кампании">
           {counters.map(([label, value]) => (
             <article className="metric" key={label}>
@@ -679,10 +791,6 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
               <p>{label}</p>
             </article>
           ))}
-          <article className="metric metric-wide">
-            <span className="metric-date">{formatCampaignDateTime(campaign.worldTime, campaign.calendar)}</span>
-            <p>{ru.worldTime}</p>
-          </article>
         </section>
 
         <section className="campaign-search-panel" aria-labelledby="campaign-search-heading">
@@ -730,26 +838,21 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                 {ru.entityTypes[type]}
               </button>
             ))}
-          </div>
-          <div className="campaign-filter-row" aria-label={ru.entityStatusFilter}>
-            <span>{ru.entityStatusFilter}</span>
-            {(['all', 'draft', 'active'] as const).map((status) => (
+            {campaign.customEntityTypes.map((customType) => (
               <button
-                aria-pressed={entityStatusFilter === status}
-                className={entityStatusFilter === status ? 'is-active' : ''}
-                key={status}
-                onClick={() => setEntityStatusFilter(status)}
+                aria-pressed={customEntityTypeFilters.includes(customType.id)}
+                className={customEntityTypeFilters.includes(customType.id) ? 'is-active' : ''}
+                key={customType.id}
+                onClick={() => toggleCustomEntityTypeFilter(customType.id)}
                 type="button"
               >
-                {status === 'all' ? ru.allStatuses : ru.lifecycleStatuses[status]}
+                {customType.name}
               </button>
             ))}
-            {isEntitySearchFiltered && (
-              <button className="campaign-filter-reset" onClick={resetEntitySearch} type="button">
-                {ru.resetFilters}
-              </button>
-            )}
           </div>
+          {isEntitySearchFiltered && <div className="campaign-filter-row">
+            <button className="campaign-filter-reset" onClick={resetEntitySearch} type="button">{ru.resetFilters}</button>
+          </div>}
         </section>
 
         <section className="entity-workspace" aria-labelledby="entities-heading">
@@ -783,16 +886,8 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                   <article className="entity-row" key={entity.id}>
                     <span className="entity-type-mark" aria-hidden="true" />
                     <div>
-                      <div className="entity-row-heading">
-                        <h3>{entity.name}</h3>
-                        <span>{ru.lifecycleStatuses[entity.status]}</span>
-                      </div>
+                      <div className="entity-row-heading"><h3>{entity.name}</h3></div>
                       <p>{entity.summary || 'Короткая заметка не добавлена.'}</p>
-                      {(entityContextPaths.get(entity.id)?.length ?? 0) > 0 && (
-                        <div className="entity-context-tags" aria-label="Контекст сущности">
-                          {entityContextPaths.get(entity.id)!.map((context) => <span key={context.id}>{context.name}</span>)}
-                        </div>
-                      )}
                       {entity.characterTags.length > 0 && (
                         <div className="entity-character-tags" aria-label="Ролевые теги персонажа">
                           {entity.characterTags.map((tag) => <span key={tag}>{tag}</span>)}
@@ -805,7 +900,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                         </p>
                       )}
                     </div>
-                    <strong>{ru.entityTypes[entity.type]}</strong>
+                    <strong>{entityTypeLabel(campaign, entity)}</strong>
                     <div className="entity-row-actions">
                       <button
                         className="link-button"
@@ -820,13 +915,6 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                         type="button"
                       >
                         {ru.state}
-                      </button>
-                      <button
-                        className="link-button"
-                        onClick={() => openEntityPanel(entity.id, 'knowledge')}
-                        type="button"
-                      >
-                        {ru.knowledge}
                       </button>
                       <button
                         className="danger-link"
@@ -846,101 +934,29 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             )}
           </div>
 
-          {editingEntity ? (
-            <div className="entity-side-panel">
-              <div className="entity-panel-toolbar">
-                <div aria-label={ru.entityPanelSections} className="entity-panel-tabs" role="tablist">
-                  <button
-                    aria-controls="entity-details-panel"
-                    aria-selected={entityPanelView === 'details'}
-                    className={`entity-panel-tab ${entityPanelView === 'details' ? 'is-active' : ''}`}
-                    id="entity-details-tab"
-                    onClick={() => setEntityPanelView('details')}
-                    role="tab"
-                    type="button"
-                  >
-                    {ru.entityData}
-                  </button>
-                  <button
-                    aria-controls="entity-state-panel"
-                    aria-selected={entityPanelView === 'state'}
-                    className={`entity-panel-tab ${entityPanelView === 'state' ? 'is-active' : ''}`}
-                    id="entity-state-tab"
-                    onClick={() => setEntityPanelView('state')}
-                    role="tab"
-                    type="button"
-                  >
-                    {ru.state}
-                    <span>{editingEntity.state.length}</span>
-                  </button>
-                  <button
-                    aria-controls="entity-knowledge-panel"
-                    aria-selected={entityPanelView === 'knowledge'}
-                    className={`entity-panel-tab ${entityPanelView === 'knowledge' ? 'is-active' : ''}`}
-                    id="entity-knowledge-tab"
-                    onClick={() => setEntityPanelView('knowledge')}
-                    role="tab"
-                    type="button"
-                  >
-                    {ru.knowledge}
-                    <span>{editingEntityKnowledge.length}</span>
-                  </button>
-                </div>
-                <button className="text-button" onClick={() => setEditingEntityId('')} type="button">
-                  {ru.close}
-                </button>
-              </div>
-              {entityPanelView === 'details' ? (
-                <div aria-labelledby="entity-details-tab" id="entity-details-panel" role="tabpanel">
-                  <EntityEditor
-                    entity={editingEntity}
-                    isSaving={isUpdatingEntity}
-                    key={editingEntity.id}
-                    onCancel={() => setEditingEntityId('')}
-                    onSave={(input) => handleEntityUpdate(editingEntity, input)}
-                  />
-                </div>
-              ) : entityPanelView === 'state' ? (
-                <div aria-labelledby="entity-state-tab" id="entity-state-panel" role="tabpanel">
-                  <EntityStateEditor
-                    entity={editingEntity}
-                    isSaving={isSavingEntityState}
-                    onRemove={(stateId) => handleEntityStateRemove(editingEntity, stateId)}
-                    onSave={(input) => handleEntityStateSave(editingEntity, input)}
-                  />
-                </div>
-              ) : (
-                <div aria-labelledby="entity-knowledge-tab" id="entity-knowledge-panel" role="tabpanel">
-                  <EntityKnowledgeEditor
-                    entities={activeEntities}
-                    entity={editingEntity}
-                    isSaving={isSavingKnowledge}
-                    key={editingEntity.id}
-                    knowledge={editingEntityKnowledge}
-                    onRemove={handleKnowledgeRemove}
-                    onSave={handleKnowledgeSave}
-                  />
-                </div>
-              )}
-            </div>
-          ) : <form className="quick-create" onSubmit={handleEntitySubmit}>
+          <form className="quick-create" onSubmit={handleEntitySubmit}>
             <p className="overline">{ru.quickCreate}</p>
             <h2>Новая сущность</h2>
+            {campaign.entityTemplates.length > 0 && <>
+              <label htmlFor="entity-template">Шаблон карточки</label>
+              <select id="entity-template" onChange={(event) => selectEntityTemplate(event.target.value)} value={entityTemplateId}>
+                <option value="">Без шаблона</option>
+                {campaign.entityTemplates.map((template) => <option key={template.id} value={template.id}>{template.name} · {entityTypeLabel(campaign, template)}</option>)}
+              </select>
+            </>}
             <label htmlFor="entity-type">{ru.entityType}</label>
             <select
               id="entity-type"
-              onChange={(event) => setEntityType(event.target.value as EntityType)}
-              value={entityType}
+              onChange={(event) => selectEntityType(event.target.value)}
+              value={customEntityTypeId ? `custom:${customEntityTypeId}` : `base:${entityType}`}
             >
-              {ENTITY_TYPES.map((type) => (
-                <option key={type} value={type}>{ru.entityTypes[type]}</option>
-              ))}
+              <optgroup label="Встроенные типы">{ENTITY_TYPES.map((type) => (
+                <option key={type} value={`base:${type}`}>{ru.entityTypes[type]}</option>
+              ))}</optgroup>
+              {campaign.customEntityTypes.length > 0 && <optgroup label="Пользовательские типы">{campaign.customEntityTypes.map((customType) => (
+                <option key={customType.id} value={`custom:${customType.id}`}>{customType.name} · {ru.entityTypes[customType.baseType]}</option>
+              ))}</optgroup>}
             </select>
-            {entityType === 'location' && <>
-              <label htmlFor="entity-location-level">{ru.locationLevel}</label>
-              <input id="entity-location-level" min="1" onChange={(event) => setEntityLocationLevel(Number(event.target.value))} type="number" value={entityLocationLevel} />
-              <p className="form-hint">{ru.locationLevelHint}</p>
-            </>}
             <label htmlFor="entity-name">{ru.entityName}</label>
             <input
               autoComplete="off"
@@ -965,7 +981,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             <button className="button button-primary button-block" disabled={isCreatingEntity} type="submit">
               {isCreatingEntity ? 'Создаём…' : ru.createEntity}
             </button>
-          </form>}
+          </form>
         </section>
 
         <section className="relationship-workspace" aria-labelledby="relationships-heading">
@@ -993,8 +1009,7 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
                       <strong>{entityNames.get(relationship.targetId) ?? 'Неизвестная сущность'}</strong>
                     </div>
                     <div className="relationship-meta">
-                      <span>{ru.relationshipTypes[relationship.type]}</span>
-                      <small>{ru.visibility[relationship.visibility]}</small>
+                      <span>{campaign.predicates.find((predicate) => predicate.id === relationship.predicateId)?.directLabel ?? ru.relationshipTypes[relationship.type]}</span>
                       {relationship.description && <p>{relationship.description}</p>}
                     </div>
                     <button
@@ -1130,16 +1145,6 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
               rows={3}
               value={relationshipDescription}
             />
-            <label htmlFor="relationship-visibility">{ru.relationshipVisibility}</label>
-            <select
-              id="relationship-visibility"
-              onChange={(event) => setRelationshipVisibility(event.target.value as Visibility)}
-              value={relationshipVisibility}
-            >
-              <option value="game_master">{ru.visibility.game_master}</option>
-              <option value="party">{ru.visibility.party}</option>
-              <option value="public">{ru.visibility.public}</option>
-            </select>
             <label className="checkbox-field" htmlFor="relationship-directed">
               <input
                 checked={relationshipDirected}
@@ -1163,36 +1168,191 @@ function CampaignOverview({ campaign, repository, onBack, onCampaignChanged }: C
             </button>
           </form>
         </section>
+        <CustomEntityTypeManager
+          campaign={campaign}
+          isSaving={isSavingCustomEntityType}
+          onCreate={handleCustomEntityTypeCreate}
+          onRemove={handleCustomEntityTypeRemove}
+          onRename={handleCustomEntityTypeRename}
+        />
         </section>}
 
-        {workspaceView === 'graph' && <section aria-labelledby="campaign-workspace-tab-graph" className="campaign-workspace-panel campaign-workspace-panel-graph" id="campaign-workspace-panel-graph" role="tabpanel">
+        {workspaceView === 'graph' && <section
+          aria-labelledby="campaign-workspace-tab-graph"
+          className="campaign-workspace-panel campaign-workspace-panel-graph"
+          id="campaign-workspace-panel-graph"
+          onKeyDown={(event) => {
+            if (event.key !== 'Tab' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || !(event.target instanceof HTMLElement) || !event.target.classList.contains('graph-scroll')) return
+            event.preventDefault()
+            selectCanvasMode(toggleCampaignCanvasMode(canvasMode))
+            window.requestAnimationFrame(() => document.querySelector<HTMLElement>('#campaign-workspace-panel-graph .graph-scroll')?.focus())
+          }}
+          role="tabpanel"
+        >
           <section className="graph-workspace-tools" aria-label="Фильтры графа">
-            <div><strong>Область графа</strong><span>{visibleEntities.length} из {activeEntities.length} сущностей</span></div>
-            <div className="graph-workspace-search"><input aria-label="Поиск узлов графа" onChange={(event) => setCampaignSearch(event.target.value)} placeholder="Найти узел по названию или данным" type="search" value={campaignSearch} />{campaignSearch && <button aria-label="Очистить поиск графа" onClick={() => setCampaignSearch('')} type="button">×</button>}</div>
-            <div className="graph-workspace-filters" aria-label="Типы узлов графа"><button aria-pressed={entityTypeFilters.length === 0} className={entityTypeFilters.length === 0 ? 'is-active' : ''} onClick={() => setEntityTypeFilters([])} type="button">Все</button>{ENTITY_TYPES.map((type) => <button aria-pressed={entityTypeFilters.includes(type)} className={entityTypeFilters.includes(type) ? 'is-active' : ''} key={type} onClick={() => toggleEntityTypeFilter(type)} type="button">{ru.entityTypes[type]}</button>)}</div>
-            {isEntitySearchFiltered && <button className="link-button" onClick={resetEntitySearch} type="button">Сбросить фильтр графа</button>}
+            <div className="canvas-mode-switcher" role="tablist" aria-label="Режим канваса">
+              <button aria-selected={canvasMode === 'knowledge'} className={canvasMode === 'knowledge' ? 'is-active' : ''} onClick={() => selectCanvasMode('knowledge')} role="tab" type="button"><span aria-hidden="true">◎</span><strong>Граф знаний</strong><small>Сущности и факты</small></button>
+              <button aria-selected={canvasMode === 'logic'} className={canvasMode === 'logic' ? 'is-active' : ''} onClick={() => selectCanvasMode('logic')} role="tab" type="button"><span aria-hidden="true">◇</span><strong>Граф логики</strong><small>События и последствия</small></button>
+            </div>
+            {canvasMode === 'knowledge' && <>
+              <div className="graph-workspace-search"><input aria-label="Поиск узлов графа" onChange={(event) => setCampaignSearch(event.target.value)} placeholder="Найти узел по названию или данным" type="search" value={campaignSearch} />{campaignSearch && <button aria-label="Очистить поиск графа" onClick={() => setCampaignSearch('')} type="button">×</button>}</div>
+              <div className="graph-workspace-filters" aria-label="Типы узлов графа"><button aria-pressed={entityTypeFilters.length === 0 && customEntityTypeFilters.length === 0} className={entityTypeFilters.length === 0 && customEntityTypeFilters.length === 0 ? 'is-active' : ''} onClick={() => { setEntityTypeFilters([]); setCustomEntityTypeFilters([]) }} type="button">Все</button>{ENTITY_TYPES.map((type) => <button aria-pressed={entityTypeFilters.includes(type)} className={entityTypeFilters.includes(type) ? 'is-active' : ''} key={type} onClick={() => toggleEntityTypeFilter(type)} type="button">{ru.entityTypes[type]}</button>)}{campaign.customEntityTypes.map((customType) => <button aria-pressed={customEntityTypeFilters.includes(customType.id)} className={customEntityTypeFilters.includes(customType.id) ? 'is-active' : ''} key={customType.id} onClick={() => toggleCustomEntityTypeFilter(customType.id)} type="button">{customType.name}</button>)}</div>
+              {isEntitySearchFiltered && <button className="link-button" onClick={resetEntitySearch} type="button">Сбросить фильтр графа</button>}
+              <SavedGraphViews
+                isSaving={isSavingGraphView}
+                onApply={applySavedGraphView}
+                onCreate={handleGraphViewCreate}
+                onRemove={handleGraphViewRemove}
+                onRename={handleGraphViewRename}
+                views={savedGraphViews}
+              />
+            </>}
           </section>
-          <CampaignGraph
-          campaign={campaign}
-          entityIds={visibleEntityIds}
-          isFiltered={isEntitySearchFiltered}
-        /></section>}
-
-        {workspaceView === 'logic' && <section aria-labelledby="campaign-workspace-tab-logic" className="campaign-workspace-panel" id="campaign-workspace-panel-logic" role="tabpanel">
-          <LogicActivationQueue campaign={campaign} isSaving={isSavingLogic} onApply={handleLogicActivationApply} onDismiss={handleLogicActivationDismiss} />
-          <LogicRuleBuilder
-          campaign={campaign}
-          isSaving={isSavingLogic}
-          onApply={handleLogicRuleApply}
-          onRemove={handleLogicRuleRemove}
-          onSave={handleLogicRuleSave}
-          />
+          {canvasMode === 'knowledge' ? <div className={`knowledge-canvas-workspace${isGraphCreateOpen ? ' has-drawer' : ''}`}>
+            <CampaignGraph
+              campaign={campaign}
+              entityIds={visibleEntityIds}
+              interactionBlocked={isGraphCreateOpen}
+              isFiltered={isEntitySearchFiltered}
+              onCreateEntity={openGraphEntityCreate}
+              onCreateFact={handleGraphFactCreate}
+              onArchiveFact={handleArchiveRelationship}
+              onUpdatePredicate={handlePredicateUpdate}
+              onArchivePredicate={handlePredicateArchive}
+              onOpenEntity={openGraphEntityPanel}
+              onUpdateHotbarSlot={handleHotbarSlotUpdate}
+            />
+            {isGraphCreateOpen && (
+              <aside className="graph-entity-drawer" aria-label="Создание сущности">
+                <div className="graph-entity-drawer-toolbar">
+                  <div>
+                    <p className="overline">Новая сущность</p>
+                    <strong>Создание на канвасе</strong>
+                  </div>
+                  <button
+                    aria-label="Закрыть карточку"
+                    className="text-button"
+                    onClick={() => { setEditingEntityId(''); setIsGraphCreateOpen(false) }}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+                <form className="graph-quick-create" onSubmit={handleGraphEntitySubmit}>
+                    {campaign.entityTemplates.length > 0 && <>
+                      <label htmlFor="graph-entity-template">Шаблон карточки</label>
+                      <select id="graph-entity-template" onChange={(event) => selectEntityTemplate(event.target.value)} value={entityTemplateId}>
+                        <option value="">Без шаблона</option>
+                        {campaign.entityTemplates.map((template) => <option key={template.id} value={template.id}>{template.name} · {entityTypeLabel(campaign, template)}</option>)}
+                      </select>
+                    </>}
+                    <label htmlFor="graph-entity-name">{ru.entityName}</label>
+                    <input
+                      autoComplete="off"
+                      autoFocus
+                      id="graph-entity-name"
+                      onChange={(event) => setEntityName(event.target.value)}
+                      placeholder="Например, Анна"
+                      value={entityName}
+                    />
+                    <label htmlFor="graph-entity-type">{ru.entityType}</label>
+                    <select id="graph-entity-type" onChange={(event) => selectEntityType(event.target.value)} value={customEntityTypeId ? `custom:${customEntityTypeId}` : `base:${entityType}`}>
+                      <optgroup label="Встроенные типы">{ENTITY_TYPES.map((type) => <option key={type} value={`base:${type}`}>{ru.entityTypes[type]}</option>)}</optgroup>
+                      {campaign.customEntityTypes.length > 0 && <optgroup label="Пользовательские типы">{campaign.customEntityTypes.map((customType) => <option key={customType.id} value={`custom:${customType.id}`}>{customType.name} · {ru.entityTypes[customType.baseType]}</option>)}</optgroup>}
+                    </select>
+                    <label htmlFor="graph-entity-summary">{ru.entitySummary}</label>
+                    <textarea
+                      id="graph-entity-summary"
+                      onChange={(event) => setEntitySummary(event.target.value)}
+                      placeholder={ru.entitySummaryPlaceholder}
+                      rows={4}
+                      value={entitySummary}
+                    />
+                    <p className="form-hint">Сущность появится в графе и библиотеке. Полную карточку можно открыть отдельно.</p>
+                    <button className="button button-primary button-block" disabled={isCreatingEntity} type="submit">
+                      {isCreatingEntity ? 'Создаём…' : 'Создать сущность'}
+                    </button>
+                </form>
+              </aside>
+            )}
+          </div> : <LogicCanvas
+            campaign={campaign}
+            onApplyRule={handleLogicRuleApply}
+            onOpenEntity={(entityId) => { setCanvasMode('knowledge'); openGraphEntityPanel(entityId) }}
+            onRemoveRule={handleLogicRuleRemove}
+            onSaveRule={handleLogicRuleSave}
+          />}
         </section>}
 
         {workspaceView === 'history' && <section aria-labelledby="campaign-workspace-tab-history" className="campaign-workspace-panel" id="campaign-workspace-panel-history" role="tabpanel">
-          <CampaignEventLog campaign={campaign} onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')} />
+          <CampaignEventLog
+            campaign={campaign}
+            onOpenEntity={(entityId) => openEntityPanel(entityId, 'details')}
+            onRedo={() => handleHistoryAction('redo')}
+            onUndo={() => handleHistoryAction('undo')}
+          />
         </section>}
       </main>
+      {editingEntity && <EntityFullScreenCard
+        entity={editingEntity}
+        historyCount={editingEntityHistoryCount}
+        isSaving={isUpdatingEntity || isSavingEntityState}
+        onRequestClose={closeEntityPanel}
+        onSelectView={selectEntityPanelView}
+        relationshipCount={editingEntityRelationshipCount}
+        typeLabel={entityTypeLabel(campaign, editingEntity)}
+        view={entityPanelView}
+      >
+        {entityPanelView === 'details' ? (
+          <div aria-labelledby="entity-fullscreen-title" id="entity-fullscreen-details" role="tabpanel">
+            <EntityEditor
+              customFieldDefinitions={campaign.customFieldDefinitions}
+              entity={editingEntity}
+              entities={campaign.entities}
+              entityTemplates={campaign.entityTemplates}
+              isSavingTemplate={isSavingEntityTemplate}
+              logicRules={campaign.logicRules}
+              handleEscape={false}
+              isSaving={isUpdatingEntity}
+              key={editingEntity.id}
+              onCancel={() => { setEditingEntityId(''); setIsEntityEditorDirty(false) }}
+              onDirtyChange={setIsEntityEditorDirty}
+              onCreateTemplate={(name) => handleEntityTemplateCreate(editingEntity, name)}
+              onRemoveTemplate={handleEntityTemplateRemove}
+              onSave={(input) => handleEntityUpdate(editingEntity, input)}
+              showHeader={false}
+              typeLabel={entityTypeLabel(campaign, editingEntity)}
+            />
+          </div>
+        ) : entityPanelView === 'state' ? (
+          <div aria-labelledby="entity-fullscreen-title" id="entity-fullscreen-state" role="tabpanel">
+            <EntityStateEditor
+              entity={editingEntity}
+              isSaving={isSavingEntityState}
+              onRemove={(stateId) => handleEntityStateRemove(editingEntity, stateId)}
+              onSave={(input) => handleEntityStateSave(editingEntity, input)}
+            />
+          </div>
+        ) : entityPanelView === 'relationships' ? (
+          <div aria-labelledby="entity-fullscreen-title" id="entity-fullscreen-relationships" role="tabpanel">
+            <EntityRelationshipsPanel
+              campaign={campaign}
+              entity={editingEntity}
+              isArchivingRelationshipId={archivingRelationshipId}
+              onArchiveRelationship={handleArchiveRelationship}
+              onOpenEntity={openGraphEntityPanel}
+            />
+          </div>
+        ) : (
+          <div aria-labelledby="entity-fullscreen-title" id="entity-fullscreen-history" role="tabpanel">
+            <EntityHistoryPanel
+              campaign={campaign}
+              entity={editingEntity}
+              onOpenEntity={openGraphEntityPanel}
+            />
+          </div>
+        )}
+      </EntityFullScreenCard>}
     </div>
   )
 }
@@ -1210,6 +1370,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [isCreatingTestStand, setIsCreatingTestStand] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -1260,6 +1421,26 @@ export default function App() {
       setError(caught instanceof Error ? caught.message : ru.storageError)
     } finally {
       setIsImporting(false)
+    }
+  }
+
+  async function handleCreateLogicTestStand() {
+    setError('')
+    setMessage('')
+    setIsCreatingTestStand(true)
+    try {
+      const existing = await repository.getById(LOGIC_TEST_CAMPAIGN_ID)
+      if (existing && !window.confirm('Пересоздать тестовый стенд? Текущая версия стенда будет сохранена в локальную страховочную копию.')) return
+
+      const campaign = createLogicTestCampaign()
+      await repository.importCampaign(campaign)
+      setCampaigns((current) => upsertCampaign(current, campaign))
+      setMessage(existing ? 'Тестовый стенд пересоздан. Предыдущая версия сохранена локально.' : 'Тестовый стенд логики создан локально.')
+      setSelected(campaign)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : ru.storageError)
+    } finally {
+      setIsCreatingTestStand(false)
     }
   }
 
@@ -1361,6 +1542,18 @@ export default function App() {
               {isSaving ? ru.creating : ru.create}
             </button>
             <p className="privacy-note">Без аккаунта и отправки данных в сеть.</p>
+            {import.meta.env.DEV && <>
+              <p className="overline">Режим разработки</p>
+              <button
+                className="button button-secondary button-block"
+                disabled={isCreatingTestStand}
+                onClick={handleCreateLogicTestStand}
+                type="button"
+              >
+                {isCreatingTestStand ? 'Подготавливаем…' : campaigns.some((campaign) => campaign.id === LOGIC_TEST_CAMPAIGN_ID) ? 'Пересоздать тестовый стенд' : 'Создать тестовый стенд логики'}
+              </button>
+              <p className="privacy-note">Отдельная локальная кампания для безопасных проверок условий и результатов.</p>
+            </>}
           </form>
         </section>
       </main>

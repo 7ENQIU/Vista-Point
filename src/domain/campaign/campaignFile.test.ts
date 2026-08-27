@@ -12,17 +12,61 @@ import { archiveEntityInCampaign } from './archiveCampaignItem'
 import { setKnowledgeInCampaign } from './setKnowledge'
 import { setLogicRuleInCampaign } from './logicRules'
 import { refreshLogicTriggersInCampaign } from './logicTriggers'
+import { setHotbarSlotInCampaign } from './hotbar'
 import { startSessionInCampaign } from './sessions'
+import { createEntityTemplateFromEntity } from './entityTemplates'
+import { createCustomEntityTypeInCampaign } from './customEntityTypes'
+import { createSavedGraphViewInCampaign } from './savedGraphViews'
 
 const now = new Date('2026-08-19T18:00:00.000Z')
 
 describe('campaign file', () => {
   it('экспортируется и импортируется без потери данных', () => {
-    const campaign = createCampaign({ name: 'Северный рубеж' }, now, 'campaign-1')
+    const campaign = setHotbarSlotInCampaign(createCampaign({ name: 'Северный рубеж' }, now, 'campaign-1'), 1, {
+      type: 'create_fact', label: 'Находится в', predicateId: 'builtin:located_in', directed: true,
+      description: '',
+    }, now)
     const source = serializeCampaignFile(campaign, now)
 
     expect(parseCampaignFile(source)).toEqual(campaign)
     expect(campaignFileName(campaign)).toBe('Северный рубеж.vista-point.json')
+  })
+
+  it('экспортирует шаблоны карточек и отклоняет повреждённое значение поля', () => {
+    const withEntity = addEntityToCampaign(createCampaign({ name: 'Шаблоны' }, now, 'campaign-1'), { type: 'npc', name: 'Анна' }, { entityId: 'anna' }).campaign
+    const prepared = {
+      ...withEntity,
+      customFieldDefinitions: [{ id: 'rank', name: 'Ранг', type: 'number' as const }],
+      entities: withEntity.entities.map((entity) => ({ ...entity, customFields: { rank: 2 } })),
+    }
+    const campaign = createEntityTemplateFromEntity(prepared, 'anna', 'Разведчик', { templateId: 'template-1' }).campaign
+    expect(parseCampaignFile(serializeCampaignFile(campaign, now))).toEqual(campaign)
+
+    const broken = JSON.parse(serializeCampaignFile(campaign, now))
+    broken.campaign.entityTemplates[0].customFields.rank = 'не число'
+    expect(() => parseCampaignFile(JSON.stringify(broken))).toThrow('Шаблоны карточек')
+  })
+
+  it('экспортирует пользовательский тип и отклоняет несовместимую ссылку сущности', () => {
+    const typed = createCustomEntityTypeInCampaign(createCampaign({ name: 'Типы' }, now, 'campaign-1'), { name: 'Город', baseType: 'location' }, { typeId: 'city' }).campaign
+    const campaign = addEntityToCampaign(typed, { type: 'location', customTypeId: 'city', name: 'Порт' }, { entityId: 'port' }).campaign
+    expect(parseCampaignFile(serializeCampaignFile(campaign, now))).toEqual(campaign)
+
+    const broken = JSON.parse(serializeCampaignFile(campaign, now))
+    broken.campaign.entities[0].type = 'npc'
+    expect(() => parseCampaignFile(JSON.stringify(broken))).toThrow('несовместимый пользовательский тип')
+  })
+
+  it('экспортирует сохранённый вид и отклоняет отсутствующий пользовательский тип', () => {
+    const typed = createCustomEntityTypeInCampaign(createCampaign({ name: 'Виды' }, now, 'campaign-1'), { name: 'Город', baseType: 'location' }, { typeId: 'city' }).campaign
+    const campaign = createSavedGraphViewInCampaign(typed, {
+      name: 'Города', query: 'порт', entityTypes: ['location'], customEntityTypeIds: ['city'],
+    }, { viewId: 'view-1' }).campaign
+    expect(parseCampaignFile(serializeCampaignFile(campaign, now))).toEqual(campaign)
+
+    const broken = JSON.parse(serializeCampaignFile(campaign, now))
+    broken.campaign.savedGraphViews[0].customEntityTypeIds = ['missing']
+    expect(() => parseCampaignFile(JSON.stringify(broken))).toThrow('Сохранённый вид графа')
   })
 
   it('отклоняет неизвестную версию схемы', () => {
@@ -31,6 +75,25 @@ describe('campaign file', () => {
     file.campaign.schemaVersion = 99
 
     expect(() => parseCampaignFile(JSON.stringify(file))).toThrow(CampaignFileError)
+  })
+
+  it('сохраняет локальное изображение и отклоняет активный SVG', () => {
+    const campaign = addEntityToCampaign(createCampaign({ name: 'Портрет' }, now, 'campaign-1'), {
+      type: 'npc', name: 'Анна',
+    }, { entityId: 'e1' }).campaign
+    campaign.entities[0].dmNotes = 'Не показывать игрокам.'
+    campaign.entities[0].image = {
+      dataUrl: 'data:image/png;base64,aGVsbG8=', mimeType: 'image/png',
+      fileName: 'anna.png', updatedAt: now.toISOString(),
+    }
+    expect(parseCampaignFile(serializeCampaignFile(campaign, now))).toEqual(campaign)
+
+    const broken = JSON.parse(serializeCampaignFile(campaign, now))
+    broken.campaign.entities[0].image = {
+      dataUrl: 'data:image/svg+xml;base64,PHN2Zy8+', mimeType: 'image/svg+xml',
+      fileName: 'unsafe.svg', updatedAt: now.toISOString(),
+    }
+    expect(() => parseCampaignFile(JSON.stringify(broken))).toThrow(CampaignFileError)
   })
 
   it('импортирует схему v1 через миграцию и добавляет состояние и Knowledge State', () => {
@@ -45,7 +108,8 @@ describe('campaign file', () => {
 
     const restored = parseCampaignFile(JSON.stringify(file))
 
-    expect(restored.schemaVersion).toBe(11)
+    expect(restored.schemaVersion).toBe(22)
+    expect(restored.hotbar).toHaveLength(10)
     expect(restored.entities[0].state).toEqual([])
     expect(restored.knowledge).toEqual([])
     expect(restored.logicRules).toEqual([])
@@ -83,15 +147,25 @@ describe('campaign file', () => {
       sourceId: 'missing-1',
       targetId: 'missing-2',
       type: 'knows',
+      predicateId: 'builtin:knows',
       directed: true,
       description: '',
       status: 'active',
-      visibility: 'game_master',
     })
 
     expect(() => parseCampaignFile(JSON.stringify(file))).toThrow(
       'ссылки на отсутствующие сущности',
     )
+  })
+
+  it('отклоняет факт со ссылкой на отсутствующий предикат', () => {
+    const first = addEntityToCampaign(createCampaign({ name: 'Факты' }, now, 'campaign-1'), { type: 'npc', name: 'Анна' }, { entityId: 'e1' }).campaign
+    const second = addEntityToCampaign(first, { type: 'location', name: 'Башня' }, { entityId: 'e2' }).campaign
+    const related = addRelationshipToCampaign(second, { sourceId: 'e1', targetId: 'e2', type: 'located_in', directed: true }).campaign
+    const broken = JSON.parse(serializeCampaignFile(related, now))
+    broken.campaign.relationships[0].predicateId = 'missing-predicate'
+
+    expect(() => parseCampaignFile(JSON.stringify(broken))).toThrow('ссылки на отсутствующие сущности')
   })
 
   it('отклоняет повторяющиеся идентификаторы связей', () => {

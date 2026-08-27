@@ -26,8 +26,7 @@ describe('addEntityToCampaign', () => {
       type: 'location',
       name: 'Старый маяк',
       summary: 'На северном мысе',
-      status: 'draft',
-      visibility: 'game_master',
+      status: 'active',
     })
     expect(result.event).toMatchObject({
       id: 'event-1',
@@ -48,12 +47,12 @@ describe('addEntityToCampaign', () => {
     )
   })
 
-  it('сохраняет уровень локации и отдельные ролевые теги NPC', () => {
+  it('не создаёт числовой уровень локации и сохраняет отдельные ролевые теги NPC', () => {
     const campaign = createCampaign({ name: 'Иерархия' })
-    const location = addEntityToCampaign(campaign, { type: 'location', name: 'Пурпе', locationLevel: 2 }).entity
+    const location = addEntityToCampaign(campaign, { type: 'location', name: 'Пурпе' }).entity
     const npc = addEntityToCampaign(campaign, { type: 'npc', name: 'Макс', characterTags: [' бандит ', 'дворянин'] }).entity
 
-    expect(location.locationLevel).toBe(2)
+    expect(location.locationLevel).toBeUndefined()
     expect(npc.characterTags).toEqual(['бандит', 'дворянин'])
   })
 })

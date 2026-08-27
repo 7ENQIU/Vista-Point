@@ -1,4 +1,6 @@
 import { CAMPAIGN_SCHEMA_VERSION, type Campaign } from './types'
+import { createBuiltinPredicates } from './predicateCatalog'
+import { createEmptyHotbar } from './hotbar'
 
 export interface CreateCampaignInput {
   name: string
@@ -28,7 +30,13 @@ export function createCampaign(
     worldTime: timestamp,
     calendar: { kind: 'gregorian', name: 'Григорианский календарь' },
     entities: [],
+    predicates: createBuiltinPredicates(id, timestamp),
     relationships: [],
+    hotbar: createEmptyHotbar(),
+    customFieldDefinitions: [],
+    customEntityTypes: [],
+    savedGraphViews: [],
+    entityTemplates: [],
     knowledge: [],
     logicRules: [],
     logicTriggerStates: [],

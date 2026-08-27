@@ -33,8 +33,6 @@ describe('updateAndSaveEntity', () => {
       aliases: ['Северный город'],
       summary: 'Крупнейшая локация кампании',
       description: '',
-      status: 'active',
-      visibility: 'game_master',
       tags: ['город'],
     })
 
@@ -52,8 +50,6 @@ describe('updateAndSaveEntity', () => {
       aliases: [],
       summary: '',
       description: '',
-      status: 'draft',
-      visibility: 'game_master',
       tags: [],
     })
 

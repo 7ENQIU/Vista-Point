@@ -22,7 +22,6 @@ export function selectImmediateHierarchyRelationships(
   campaign: Campaign,
   relationships = campaign.relationships.filter((relationship) => relationship.status !== 'archived'),
 ): Relationship[] {
-  const entityById = new Map(campaign.entities.map((entity) => [entity.id, entity]))
   const selected = new Map<string, { relationship: Relationship; index: number }>()
 
   relationships.forEach((relationship, index) => {
@@ -33,13 +32,8 @@ export function selectImmediateHierarchyRelationships(
       selected.set(endpoints.childId, { relationship, index })
       return
     }
-    const currentEndpoints = hierarchyEndpoints(current.relationship)!
-    const candidateParent = entityById.get(endpoints.parentId)
-    const currentParent = entityById.get(currentEndpoints.parentId)
     const priority = relationshipPriority(relationship) - relationshipPriority(current.relationship)
-    const candidateLevel = candidateParent?.type === 'location' ? candidateParent.locationLevel ?? 0 : 0
-    const currentLevel = currentParent?.type === 'location' ? currentParent.locationLevel ?? 0 : 0
-    if (priority > 0 || (priority === 0 && (candidateLevel > currentLevel || (candidateLevel === currentLevel && index > current.index)))) {
+    if (priority > 0 || (priority === 0 && index > current.index)) {
       selected.set(endpoints.childId, { relationship, index })
     }
   })

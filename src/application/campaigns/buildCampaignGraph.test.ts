@@ -4,6 +4,7 @@ import { addRelationshipToCampaign } from '../../domain/campaign/addRelationship
 import { createCampaign } from '../../domain/campaign/createCampaign'
 import { archiveEntityInCampaign, archiveRelationshipInCampaign } from '../../domain/campaign/archiveCampaignItem'
 import {
+  applyCampaignGraphEdgeRoutes,
   applyCampaignGraphNodePositions,
   buildCampaignGraph,
   getFocusedGraphContext,
@@ -77,18 +78,18 @@ describe('buildCampaignGraph', () => {
     expect(locationChildren.map((edge) => edge.target.entity.id).sort()).toEqual(['max', 'serega'])
   })
 
-  it('ставит одинаковые уровни локаций в одну колонку с постоянным шагом и не учитывает обычные связи', () => {
+  it('строит иерархию только по цепочке связей и не учитывает обычные связи', () => {
     let campaign = createCampaign({ name: 'Иерархия' }, new Date('2026-08-19T18:00:00Z'), 'levels')
-    for (const [id, type, name, locationLevel] of [
-      ['world', 'location', 'Мир', 1],
-      ['purpe', 'location', 'Пурпе', 2],
-      ['second-city', 'location', 'Второй город', 2],
-      ['station', 'location', 'Вокзал', 3],
-      ['scene', 'scene', 'Встреча', undefined],
-      ['npc', 'npc', 'Серёга', undefined],
-      ['clue', 'clue', 'Посторонняя улика', undefined],
+    for (const [id, type, name] of [
+      ['world', 'location', 'Мир'],
+      ['purpe', 'location', 'Пурпе'],
+      ['second-city', 'location', 'Второй город'],
+      ['station', 'location', 'Вокзал'],
+      ['scene', 'scene', 'Встреча'],
+      ['npc', 'npc', 'Серёга'],
+      ['clue', 'clue', 'Посторонняя улика'],
     ] as const) {
-      campaign = addEntityToCampaign(campaign, { type, name, locationLevel }, { entityId: id }).campaign
+      campaign = addEntityToCampaign(campaign, { type, name }, { entityId: id }).campaign
     }
     for (const [sourceId, targetId, type] of [
       ['purpe', 'world', 'located_in'],
@@ -144,13 +145,8 @@ describe('buildCampaignGraph', () => {
     expect(graphWithoutEntity.edges).toHaveLength(0)
   })
 
-  it('строит Party preview только из разрешённых сущностей и связей', () => {
+  it('строит Party preview только из явно известных сущностей и связей между ними', () => {
     const campaign = relatedCampaign()
-    campaign.entities[0].visibility = 'party'
-    campaign.entities[1].visibility = 'public'
-    campaign.entities[2].visibility = 'game_master'
-    campaign.relationships[0].visibility = 'party'
-    campaign.relationships[1].visibility = 'game_master'
     campaign.knowledge.push({
       id: 'k1', campaignId: campaign.id, subjectType: 'party', content: 'Партия видела след.',
       status: 'suspected', confidence: 40, truth: 'unknown', source: '',
@@ -159,32 +155,59 @@ describe('buildCampaignGraph', () => {
 
     const graph = buildCampaignGraph(campaign, { view: 'party' })
 
-    expect(graph.nodes.map((node) => node.entity.id).sort()).toEqual(['e1', 'e2', 'e3'])
-    expect(graph.edges.map((edge) => edge.relationship.id)).toEqual([campaign.relationships[0].id])
+    expect(graph.nodes.map((node) => node.entity.id)).toEqual(['e3'])
+    expect(graph.edges).toEqual([])
   })
 
-  it('применяет только вертикальный порядок внутри вычисленной иерархической колонки', () => {
+  it('применяет свободные координаты по обеим осям', () => {
     const graph = buildCampaignGraph(relatedCampaign())
-    const automaticSecond = graph.nodes.find((node) => node.entity.id === 'e2')!
-    const automaticThird = graph.nodes.find((node) => node.entity.id === 'e3')!
     const positioned = applyCampaignGraphNodePositions(graph, {
-      e2: { x: 900, y: 500 },
-      e3: { x: 50, y: 20 },
+      e2: { x: graph.width - 200, y: graph.height - 120 },
+      e3: { x: 200, y: 120 },
     })
     const positionedSecond = positioned.nodes.find((node) => node.entity.id === 'e2')!
     const positionedThird = positioned.nodes.find((node) => node.entity.id === 'e3')!
 
-    expect(positionedSecond.x).toBe(automaticSecond.x)
-    expect(positionedThird.x).toBe(automaticThird.x)
-    expect(positionedThird.y).toBe(automaticSecond.y)
-    expect(positionedSecond.y).toBe(automaticThird.y)
-    expect(positionedThird.y).toBeLessThan(positionedSecond.y)
+    expect(positionedSecond).toMatchObject({ x: graph.width - 200, y: graph.height - 120 })
+    expect(positionedThird).toMatchObject({ x: 200, y: 120 })
   })
 
-  it('не позволяет старой ручной раскладке нарушить цепочку «локация 3 → сцена 4 → NPC 5»', () => {
+  it('позволяет вручную провести линию через локальную контрольную точку', () => {
+    const graph = buildCampaignGraph(relatedCampaign())
+    const edge = graph.edges[0]
+    const routed = applyCampaignGraphEdgeRoutes(graph, {
+      [edge.relationship.id]: { x: graph.width / 2, y: graph.height - 36 },
+    }).edges[0]
+
+    expect(routed.path).not.toBe(edge.path)
+    expect(routed.labelX).toBe(graph.width / 2)
+    expect(routed.labelY).toBe(graph.height - 44)
+    expect(routed.points).toContainEqual({ x: graph.width / 2, y: graph.height - 36 })
+  })
+
+  it('переставляет карточки внутри уровня, чтобы убрать очевидное пересечение связей', () => {
+    let campaign = createCampaign({ name: 'Без пересечений' }, new Date('2026-08-27T10:00:00Z'), 'crossing-layout')
+    for (const [id, name] of [['parent-a', 'Родитель А'], ['parent-b', 'Родитель Б'], ['child-b', 'Ребёнок Б'], ['child-a', 'Ребёнок А']] as const) {
+      campaign = addEntityToCampaign(campaign, { type: 'location', name }, { entityId: id }).campaign
+    }
+    campaign = addRelationshipToCampaign(campaign, {
+      sourceId: 'child-a', targetId: 'parent-a', type: 'located_in', directed: true,
+    }, { relationshipId: 'fact-a' }).campaign
+    campaign = addRelationshipToCampaign(campaign, {
+      sourceId: 'child-b', targetId: 'parent-b', type: 'located_in', directed: true,
+    }, { relationshipId: 'fact-b' }).campaign
+
+    const graph = buildCampaignGraph(campaign)
+    const y = (id: string) => graph.nodes.find((node) => node.entity.id === id)!.y
+
+    expect(y('parent-a')).toBeLessThan(y('parent-b'))
+    expect(y('child-a')).toBeLessThan(y('child-b'))
+  })
+
+  it('сохраняет смысл цепочки при свободной ручной раскладке', () => {
     let campaign = createCampaign({ name: 'Наследование' }, new Date('2026-08-19T18:00:00Z'), 'inherited-levels')
     campaign = addEntityToCampaign(campaign, {
-      type: 'location', name: 'Вокзал', locationLevel: 3,
+      type: 'location', name: 'Вокзал',
     }, { entityId: 'location' }).campaign
     campaign = addEntityToCampaign(campaign, { type: 'scene', name: 'Приезд на поезде' }, { entityId: 'scene' }).campaign
     campaign = addEntityToCampaign(campaign, { type: 'npc', name: 'Макс' }, { entityId: 'npc' }).campaign
@@ -202,8 +225,7 @@ describe('buildCampaignGraph', () => {
     })
     const x = new Map(positioned.nodes.map((node) => [node.entity.id, node.x]))
 
-    expect(x.get('scene')! - x.get('location')!).toBe(GRAPH_COLUMN_GAP)
-    expect(x.get('npc')! - x.get('scene')!).toBe(GRAPH_COLUMN_GAP)
+    expect(x).toEqual(new Map([['location', 800], ['scene', 120], ['npc', 300]]))
     expect(positioned.edges.map((edge) => [edge.source.entity.id, edge.target.entity.id])).toEqual([
       ['location', 'scene'],
       ['scene', 'npc'],
@@ -277,9 +299,9 @@ describe('buildCampaignGraph', () => {
 
   it('не прокладывает прямую линию через защитную область посторонней карточки', () => {
     let campaign = createCampaign({ name: 'Обход' }, new Date('2026-08-19T18:00:00Z'), 'obstacle')
-    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Источник', locationLevel: 1 }, { entityId: 'parent' }).campaign
-    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Цель', locationLevel: 3 }, { entityId: 'child' }).campaign
-    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Препятствие', locationLevel: 2 }, { entityId: 'obstacle' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Источник' }, { entityId: 'parent' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Цель' }, { entityId: 'child' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Препятствие' }, { entityId: 'obstacle' }).campaign
     campaign = addRelationshipToCampaign(campaign, {
       sourceId: 'parent', targetId: 'child', type: 'knows', directed: true,
     }).campaign
@@ -308,7 +330,7 @@ describe('buildCampaignGraph', () => {
     expect(crossesObstacle).toBe(false)
   })
 
-  it('раздвигает карточки после пересекающегося ручного размещения', () => {
+  it('не переопределяет намеренно совпадающие ручные координаты', () => {
     let campaign = createCampaign({ name: 'Вертикаль' }, new Date('2026-08-19T18:00:00Z'), 'vertical')
     campaign = addEntityToCampaign(campaign, { type: 'npc', name: 'Первый' }, { entityId: 'e1' }).campaign
     campaign = addEntityToCampaign(campaign, { type: 'npc', name: 'Второй' }, { entityId: 'e2' }).campaign
@@ -321,17 +343,20 @@ describe('buildCampaignGraph', () => {
     const second = positioned.nodes.find((node) => node.entity.id === 'e2')!
 
     expect(first.x).toBe(second.x)
-    expect(Math.abs(first.y - second.y)).toBeGreaterThanOrEqual(GRAPH_NODE_HEIGHT)
+    expect(first).toMatchObject({ x: 500, y: 160 })
+    expect(second).toMatchObject({ x: 500, y: 160 })
   })
 
-  it('не позволяет восстановленным координатам вывести узел из вычисленного слота', () => {
+  it('не позволяет восстановленным координатам вывести узел за границы полотна', () => {
     const graph = buildCampaignGraph(relatedCampaign())
-    const automatic = graph.nodes.find((item) => item.entity.id === 'e1')!
     const positioned = applyCampaignGraphNodePositions(graph, {
       e1: { x: -500, y: 50_000 },
     })
     const node = positioned.nodes.find((item) => item.entity.id === 'e1')
 
-    expect(node).toMatchObject({ x: automatic.x, y: automatic.y })
+    expect(node).toMatchObject({
+      x: GRAPH_NODE_WIDTH / 2 + GRAPH_ROUTE_CLEARANCE,
+      y: graph.height - GRAPH_NODE_HEIGHT / 2 - GRAPH_ROUTE_CLEARANCE,
+    })
   })
 })

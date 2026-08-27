@@ -4,10 +4,11 @@ import { createCampaign } from './createCampaign'
 import { setLogicRuleInCampaign } from './logicRules'
 import { applyLogicActivationInCampaign, refreshLogicTriggersInCampaign } from './logicTriggers'
 import { applyWorldTimeChangeInCampaign } from './worldClock'
-import { updateEntityInCampaign } from './updateEntity'
 
 function campaignWithNpc() {
-  return addEntityToCampaign(createCampaign({ name: 'Триггеры' }, new Date('2026-08-23T10:00:00.000Z'), 'campaign-1'), { type: 'npc', name: 'Серёга' }, { entityId: 'npc-1', eventId: 'entity-event' }).campaign
+  const campaign = addEntityToCampaign(createCampaign({ name: 'Триггеры' }, new Date('2026-08-23T10:00:00.000Z'), 'campaign-1'), { type: 'npc', name: 'Серёга' }, { entityId: 'npc-1', eventId: 'entity-event' }).campaign
+  campaign.entities[0] = { ...campaign.entities[0], status: 'draft' }
+  return campaign
 }
 
 function triggeredRule(executionMode: 'automatic' | 'require_confirmation' = 'require_confirmation') {
@@ -45,8 +46,8 @@ describe('Logic Trigger Engine', () => {
   it('автоматически убирает из очереди срабатывание, условия которого перестали выполняться', () => {
     const withRule = setLogicRuleInCampaign(campaignWithNpc(), triggeredRule(), { ruleId: 'rule-1', eventId: 'rule-event' }).campaign
     const queued = refreshLogicTriggersInCampaign(withRule, { activationIds: ['activation-1'], eventIds: ['activation-created'] }).campaign
-    const entity = queued.entities[0]
-    const changed = updateEntityInCampaign(queued, entity.id, { name: entity.name, aliases: entity.aliases, summary: entity.summary, description: entity.description, status: 'active', visibility: entity.visibility, tags: entity.tags }, { eventId: 'entity-updated' }).campaign
+    const marker = { ...queued.eventLog.at(-1)!, id: 'entity-updated', type: 'entity.updated', relatedEntityIds: ['npc-1'] }
+    const changed = { ...queued, entities: queued.entities.map((entity) => ({ ...entity, status: 'active' as const })), eventLog: [...queued.eventLog, marker] }
     const refreshed = refreshLogicTriggersInCampaign(changed, { eventIds: ['activation-invalidated'] }).campaign
     expect(refreshed.logicActivations[0]).toMatchObject({ status: 'invalidated' })
     expect(refreshed.eventLog.at(-1)?.type).toBe('logic.activation.invalidated')

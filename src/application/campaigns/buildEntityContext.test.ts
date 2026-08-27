@@ -6,13 +6,13 @@ import { buildEntityContextPaths, selectImmediateHierarchyRelationships } from '
 
 function hierarchyCampaign() {
   let campaign = createCampaign({ name: 'Иерархия' }, new Date('2026-08-24T00:00:00Z'), 'c1')
-  for (const [id, type, name, locationLevel] of [
-    ['world', 'location', 'Мир', 1],
-    ['city', 'location', 'Пурпе', 2],
-    ['station', 'location', 'Вокзал', 3],
-    ['scene', 'scene', 'Встреча на вокзале', undefined],
-    ['max', 'npc', 'Макс', undefined],
-  ] as const) campaign = addEntityToCampaign(campaign, { type, name, locationLevel }, { entityId: id }).campaign
+  for (const [id, type, name] of [
+    ['world', 'location', 'Мир'],
+    ['city', 'location', 'Пурпе'],
+    ['station', 'location', 'Вокзал'],
+    ['scene', 'scene', 'Встреча на вокзале'],
+    ['max', 'npc', 'Макс'],
+  ] as const) campaign = addEntityToCampaign(campaign, { type, name }, { entityId: id }).campaign
   for (const input of [
     { sourceId: 'city', targetId: 'world', type: 'located_in' as const, directed: true },
     { sourceId: 'station', targetId: 'city', type: 'located_in' as const, directed: true },

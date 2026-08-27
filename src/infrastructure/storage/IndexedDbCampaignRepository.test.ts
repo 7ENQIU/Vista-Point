@@ -79,10 +79,10 @@ describe('IndexedDbCampaignRepository', () => {
     const [migrated] = await repository.list()
     const backups = await repository.listBackups(current.id)
 
-    expect(migrated.schemaVersion).toBe(11)
+    expect(migrated.schemaVersion).toBe(22)
     expect(migrated.entities[0].state).toEqual([])
     expect(backups).toHaveLength(1)
     expect(backups[0].reason).toBe('before-migration')
-    expect(backups[0].campaign.schemaVersion).toBe(11)
+    expect(backups[0].campaign.schemaVersion).toBe(22)
   })
 })

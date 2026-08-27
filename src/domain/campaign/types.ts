@@ -1,10 +1,80 @@
-export const CAMPAIGN_SCHEMA_VERSION = 11 as const
+export const CAMPAIGN_SCHEMA_VERSION = 22 as const
+
+export const ENTITY_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+export type EntityImageMimeType = (typeof ENTITY_IMAGE_MIME_TYPES)[number]
+export const ENTITY_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+export const ENTITY_IMAGE_MAX_DATA_URL_LENGTH = 7_100_000
+
+export interface EntityImage {
+  dataUrl: string
+  mimeType: EntityImageMimeType
+  fileName: string
+  updatedAt: string
+}
 
 export const ENTITY_TYPES = ['location', 'npc', 'scene', 'clue', 'item', 'note', 'event', 'encounter'] as const
 export type EntityType = (typeof ENTITY_TYPES)[number]
 
+export interface CustomEntityType {
+  id: string
+  campaignId: string
+  name: string
+  baseType: EntityType
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SavedGraphView {
+  id: string
+  campaignId: string
+  name: string
+  query: string
+  entityTypes: EntityType[]
+  customEntityTypeIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 export type LifecycleStatus = 'draft' | 'active' | 'archived'
-export type Visibility = 'game_master' | 'party' | 'public'
+
+export const CUSTOM_FIELD_TYPES = ['text', 'number', 'boolean', 'entity_reference'] as const
+export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number]
+export type CustomFieldValue = string | number | boolean
+
+export interface CustomFieldDefinition {
+  id: string
+  name: string
+  type: CustomFieldType
+}
+
+export interface EntityTemplate {
+  id: string
+  campaignId: string
+  name: string
+  entityType: EntityType
+  customTypeId?: string
+  summary: string
+  description: string
+  dmNotes: string
+  tags: string[]
+  characterTags: string[]
+  customFields: Record<string, CustomFieldValue>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FactHotbarPreset {
+  type: 'create_fact'
+  label: string
+  predicateId: string
+  directed: boolean
+  description: string
+}
+
+export interface HotbarSlot {
+  slot: number
+  preset?: FactHotbarPreset
+}
 export const STATE_CATEGORIES = [
   'life',
   'social',
@@ -33,9 +103,9 @@ export const LOGIC_CONDITION_OPERATORS = [
   'contains', 'not_contains', 'exists', 'not_exists',
 ] as const
 export type LogicConditionOperator = (typeof LOGIC_CONDITION_OPERATORS)[number]
-export const LOGIC_CONDITION_FIELDS = ['state', 'lifecycle_status', 'relationship', 'knowledge', 'world_time'] as const
+export const LOGIC_CONDITION_FIELDS = ['state', 'custom_field', 'lifecycle_status', 'relationship', 'knowledge', 'world_time'] as const
 export type LogicConditionField = (typeof LOGIC_CONDITION_FIELDS)[number]
-export const LOGIC_EFFECT_TYPES = ['set_state', 'set_lifecycle_status'] as const
+export const LOGIC_EFFECT_TYPES = ['set_state', 'set_custom_field', 'create_fact', 'set_lifecycle_status'] as const
 export type LogicEffectType = (typeof LOGIC_EFFECT_TYPES)[number]
 export const LOGIC_EXECUTION_MODES = ['automatic', 'require_confirmation', 'suggest_only'] as const
 export type LogicExecutionMode = (typeof LOGIC_EXECUTION_MODES)[number]
@@ -70,21 +140,38 @@ export const RELATIONSHIP_TYPES = [
   'participates_in',
 ] as const
 export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number]
+export const FACT_TYPES = [...RELATIONSHIP_TYPES, 'custom'] as const
+export type FactType = (typeof FACT_TYPES)[number]
+
+export interface Predicate {
+  id: string
+  campaignId: string
+  directLabel: string
+  inverseLabel: string
+  description: string
+  directed: boolean
+  systemType?: RelationshipType
+  status: LifecycleStatus
+  createdAt: string
+  updatedAt: string
+}
 
 export interface CampaignEntity {
   id: string
   campaignId: string
   type: EntityType
+  customTypeId?: string
   name: string
   aliases: string[]
   summary: string
   description: string
+  dmNotes: string
+  image?: EntityImage
   status: LifecycleStatus
-  visibility: Visibility
   tags: string[]
   characterTags: string[]
   locationLevel?: number
-  customFields: Record<string, unknown>
+  customFields: Record<string, CustomFieldValue>
   state: EntityStateVariable[]
   origin: EntityOrigin
   createdAt: string
@@ -104,11 +191,11 @@ export interface Relationship {
   campaignId: string
   sourceId: string
   targetId: string
-  type: RelationshipType
+  type: FactType
+  predicateId: string
   directed: boolean
   description: string
   status: LifecycleStatus
-  visibility: Visibility
 }
 
 export interface CampaignEvent {
@@ -232,8 +319,10 @@ export interface LogicCondition {
   entityId?: string
   field: LogicConditionField
   stateId?: string
+  customFieldId?: string
   targetEntityId?: string
   relationshipType?: RelationshipType
+  predicateId?: string
   subjectType?: KnowledgeSubjectType
   subjectEntityId?: string
   operator: LogicConditionOperator
@@ -250,13 +339,11 @@ export interface LogicConditionGroup {
 
 export type LogicConditionNode = LogicCondition | LogicConditionGroup
 
-export interface LogicEffect {
-  id: string
-  entityId: string
-  type: LogicEffectType
-  stateId?: string
-  value: StateValue | LifecycleStatus
-}
+export type LogicEffect =
+  | { id: string; entityId: string; type: 'set_state'; stateId: string; value: StateValue }
+  | { id: string; entityId: string; type: 'set_custom_field'; customFieldId: string; value: CustomFieldValue }
+  | { id: string; entityId: string; type: 'create_fact'; targetEntityId: string; predicateId: string; directed: boolean; description: string }
+  | { id: string; entityId: string; type: 'set_lifecycle_status'; value: LifecycleStatus }
 
 export interface LogicTrigger {
   type: LogicTriggerType
@@ -309,7 +396,13 @@ export interface Campaign {
   worldTime: string
   calendar: CampaignCalendar
   entities: CampaignEntity[]
+  predicates: Predicate[]
   relationships: Relationship[]
+  hotbar: HotbarSlot[]
+  customFieldDefinitions: CustomFieldDefinition[]
+  customEntityTypes: CustomEntityType[]
+  savedGraphViews: SavedGraphView[]
+  entityTemplates: EntityTemplate[]
   knowledge: KnowledgeRecord[]
   logicRules: LogicRule[]
   logicTriggerStates: LogicTriggerState[]

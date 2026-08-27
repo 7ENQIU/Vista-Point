@@ -22,7 +22,7 @@ describe('addRelationshipToCampaign', () => {
 
     expect(result.relationship).toMatchObject({
       id: 'r1', sourceId: 'e1', targetId: 'e2', type: 'located_in', directed: true,
-      description: 'Живёт наверху', status: 'active', visibility: 'game_master',
+      description: 'Живёт наверху', status: 'active',
     })
     expect(result.event).toMatchObject({
       id: 'ev3', type: 'relationship.created', relatedEntityIds: ['e1', 'e2'], reversible: true,
@@ -35,19 +35,6 @@ describe('addRelationshipToCampaign', () => {
     expect(() => addRelationshipToCampaign(campaignWithTwoEntities(), {
       sourceId: 'e1', targetId: 'e1', type: 'knows', directed: true,
     })).toThrow('должны быть разными')
-  })
-
-  it('сохраняет выбранную видимость связи', () => {
-    const result = addRelationshipToCampaign(campaignWithTwoEntities(), {
-      sourceId: 'e1',
-      targetId: 'e2',
-      type: 'knows',
-      directed: true,
-      visibility: 'party',
-    })
-
-    expect(result.relationship.visibility).toBe('party')
-    expect(result.event.payload.visibility).toBe('party')
   })
 
   it('не создаёт повторную ненаправленную связь в обратном порядке', () => {
@@ -74,16 +61,13 @@ describe('addRelationshipToCampaign', () => {
     expect(recreated.campaign.relationships).toHaveLength(2)
   })
 
-  it('не позволяет вложить крупную локацию в более мелкую', () => {
-    let campaign = createCampaign({ name: 'Уровни' })
-    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Мир', locationLevel: 1 }, { entityId: 'world' }).campaign
-    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Город', locationLevel: 2 }, { entityId: 'city' }).campaign
+  it('позволяет одной локации находиться в другой без числовых уровней', () => {
+    let campaign = createCampaign({ name: 'Вложенность' })
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Регион' }, { entityId: 'region' }).campaign
+    campaign = addEntityToCampaign(campaign, { type: 'location', name: 'Город' }, { entityId: 'city' }).campaign
 
-    expect(() => addRelationshipToCampaign(campaign, {
-      sourceId: 'world', targetId: 'city', type: 'located_in', directed: true,
-    })).toThrow('должен быть больше')
     expect(addRelationshipToCampaign(campaign, {
-      sourceId: 'city', targetId: 'world', type: 'located_in', directed: true,
+      sourceId: 'region', targetId: 'city', type: 'located_in', directed: true,
     }).relationship.type).toBe('located_in')
   })
 })

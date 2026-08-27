@@ -14,7 +14,7 @@ function setup() {
 const input = {
   name: 'Активация', enabled: true, executionMode: 'require_confirmation' as const,
   conditionGroup: { kind: 'group' as const, operator: 'all' as const, children: [{ kind: 'condition' as const, entityId: 'entity-1', field: 'state' as const, stateId: 'state-1', operator: 'equals' as const, value: true }] },
-  effects: [{ entityId: 'entity-1', type: 'set_lifecycle_status' as const, value: 'active' as const }],
+  effects: [{ entityId: 'entity-1', type: 'set_state' as const, stateId: 'state-1', value: false }],
 }
 
 describe('saveLogicRule', () => {
@@ -25,7 +25,7 @@ describe('saveLogicRule', () => {
     expect(save).toHaveBeenCalledTimes(1)
 
     const applied = await applyAndSaveLogicRule(repository, created.campaign, created.rule.id)
-    expect(applied.campaign.entities[0].status).toBe('active')
+    expect(applied.campaign.entities[0].state[0].value).toBe(false)
     expect(save).toHaveBeenCalledTimes(2)
 
     await removeAndSaveLogicRule(repository, applied.campaign, created.rule.id)
@@ -36,11 +36,10 @@ describe('saveLogicRule', () => {
     const save = vi.fn()
     const repository = { save } as unknown as CampaignRepository
     const campaign = setup()
-    const created = setLogicRuleInCampaign(campaign, input, { ruleId: 'rule-1' }).campaign
-    const first = await applyAndSaveLogicRule(repository, created, 'rule-1')
-    save.mockClear()
-    const second = await applyAndSaveLogicRule(repository, first.campaign, 'rule-1')
-    expect(second.changed).toBe(false)
+    const noOpInput = { ...input, effects: [{ entityId: 'entity-1', type: 'set_state' as const, stateId: 'state-1', value: true }] }
+    const created = setLogicRuleInCampaign(campaign, noOpInput, { ruleId: 'rule-1' }).campaign
+    const applied = await applyAndSaveLogicRule(repository, created, 'rule-1')
+    expect(applied.changed).toBe(false)
     expect(save).not.toHaveBeenCalled()
   })
 })
